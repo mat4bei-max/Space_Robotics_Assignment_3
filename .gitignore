@@ -1,0 +1,38 @@
+log/
+install/
+build/
+
+# OS artifacts
+*:Zone.Identifier
+*:mshield
+.DS_Store
+Thumbs.db
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.pytest_cache/
+
+# ROS
+*.o
+*.a
+*.so
+
+# LaTeX
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz
