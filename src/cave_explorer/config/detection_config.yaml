@@ -1,0 +1,9 @@
+### artifact detection config file ###
+cave_explorer_node:
+  ros__parameters:
+    activate_rgb_capture: True
+    activate_depth_capture: True
+    activate_processed_depth_capture: True
+    rgb_image_capture_directory: "/home/mat4b/space_robotics/assignment_3_ws/detection_training/data/raw_rgb_images"
+    depth_image_capture_directory: "/home/mat4b/space_robotics/assignment_3_ws/detection_training/data/raw_depth_images"
+    processed_depth_image_capture_directory: "/home/mat4b/space_robotics/assignment_3_ws/detection_training/data/processed_depth_images"
