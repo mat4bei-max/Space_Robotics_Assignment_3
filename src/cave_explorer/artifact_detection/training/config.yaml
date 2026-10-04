@@ -1,0 +1,18 @@
+setup:
+  model_name: Artefact_detection_model_v2
+  dataset: rgb_full_dataset_1/data.yaml
+  yolo_base_model: yolo26n.pt
+
+hyperparameters:
+  epochs: 600
+  patience: 30
+  learning_rate: 0.002
+  weight_decay: 0.0
+  optimizer: AdamW
+  batch_size: 4
+  img_size: 640
+
+runtime_settings:
+  device: 0 
+  workers: 0  
+  amp: false

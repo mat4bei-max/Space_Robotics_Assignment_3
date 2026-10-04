@@ -78,8 +78,8 @@ correcting spelling and wording throughout the report.
         Task & Completed? & Team member & Contribution \\
         \hline
         Perception 1 & Yes & Mathis & All \\
-        Perception 2 & & & \\
-        Perception 3 & & & \\
+        Perception 2 & Yes & Mathis & All \\
+        Perception 3 & Yes & Mathis & All \\
         Planning 1 & & & \\
         Planning 2 & & & \\
         Planning 3 & & & \\
@@ -154,10 +154,34 @@ output directories and which image outputs should be saved.
 \end{figure}
 
 \subsection{Perception 2: Detect Artefacts with Computer Vision}
-
+% TF_OLD_DATA ignoring data from the past for frame odom at time 93.450000 according to authority Authority undetectable
+% slow inference (longer than 0.2s interval) blocked callback and lead to missing data of some frames
+% initally normal ultralytics & inference directly in callback of cave explorer node
+% now seperate artifact detection is handled in its own node -> ros_yolo
+% also interval reduction of detection possible to improve performance
 
 \subsection{Perception 3: Artefact Localisation and Display}
-
+% using center coordinates of the detected bounding box to estimate the artifact's position.
+% center y together with camera fovis used to calc bearing
+% artifact distance is calculated by reading depth value at cy & cx, then transforming to distance to robot
+% artifact distance & angle are then used to calc artefact position together with robot position
+% mistake: used robot position at time of artifact localisation -> after time intensive detection model inference. This led to incorrect artifact positions being calculated, which was especially noticeable while robot was turning
+% extended get_pose_2d() function to include timestamp parameter for accurate pose retrieval
+% required to make detection callback & get_pose_2d() asynchronous, since i got error message "Lookup would require extrapolation into the future." -> TF message apparently delayed
+% to combine different observations of the same artifact to a single estimated position, a Density-Based Spatial Clustering (DBSCAN) algorithm from the scikit-learn library is used.
+% DBSCAN groups nearby points into clusters based on a specified distance threshold (eps) and a minimum number of points (min_samples). This helps in reducing noise and improving the accuracy of artifact localization.
+% to find the optimal distance threshold, multiple values where tested until a value distance of 3 meters lead to the optimal resulte
+% -> In the test run, all observations where clustered perfectly together. Also the "mineral" artefact, consisting of 2 seperate chunks, where clustered perfectly as one artifact, as intended.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.48\textwidth]{artifact_localisation.png}
+    \hfill
+    \includegraphics[width=0.48\textwidth]{artifact_localisation_clustered.png}
+    \caption{Artefact localisation markers before clustering (left) and after
+    DBSCAN clustering (right). Repeated observations are combined into a single
+    estimated position for each artefact.}
+    \label{fig:artefact-localisation-clustering}
+\end{figure}
 
 \subsection{Planning 1: Autonomously Explore the Cave}
 

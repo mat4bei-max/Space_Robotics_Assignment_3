@@ -1,4 +1,3 @@
-
 import launch_ros.actions
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -13,6 +12,7 @@ def generate_launch_description():
 
     ld = LaunchDescription()
     config_path = [FindPackageShare('cave_explorer'), 'config']
+    data_directory = [FindPackageShare('cave_explorer'), 'artifact_detection/data']
     
     # Additional command line arguments
     use_sim_time_launch_arg = DeclareLaunchArgument(
@@ -36,7 +36,7 @@ def generate_launch_description():
             {
             'use_sim_time': LaunchConfiguration('use_sim_time'),
             'print_feedback': LaunchConfiguration('print_feedback'),
-            'computer_vision_model_filename': PathJoinSubstitution(config_path+['stop_data.xml']),
+            'data_directory': PathJoinSubstitution(data_directory),
             }
         ]
     )

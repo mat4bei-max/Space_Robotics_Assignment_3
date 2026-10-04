@@ -11,8 +11,10 @@ import cv2  # OpenCV2
 import rclpy
 import message_filters
 import numpy as np
+from sklearn.cluster import DBSCAN
 from cv_bridge import CvBridge
 from std_msgs.msg import Empty
+from yolo_msgs.msg import DetectionArray
 from geometry_msgs.msg import Pose, Pose2D, PoseStamped, Point
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
@@ -125,22 +127,29 @@ class CaveExplorer(Node):
         # Subscribe to the map topic to get current bounds
         self.map_sub_ = self.create_subscription(OccupancyGrid, 'map',  self.map_callback, 1)
 
-        # Prepare image processing
-        self.image_detections_pub_ = self.create_publisher(Image, 'detections_image', 1)
-        self.declare_parameter('computer_vision_model_filename', rclpy.Parameter.Type.STRING)
-        self.computer_vision_model_ = cv2.CascadeClassifier(self.get_parameter('computer_vision_model_filename').value)
+        # Prepate image processing
         self.rgb_image_sub = message_filters.Subscriber(self, Image, 'camera/image', 1)
         self.depth_image_sub = message_filters.Subscriber(self, Image, '/camera/depth/image', 1)
         self.synchronizer = message_filters.ApproximateTimeSynchronizer([self.rgb_image_sub, self.depth_image_sub], queue_size=10, slop=0.05)
         self.synchronizer.registerCallback(self.image_callback)
 
+        # Prepare artifact detection
+        self.detection_images_ = {}
+        self.detection_every_n_images_ = self.declare_parameter('detection_every_n_images', 1).value
+        self.detection_image_count_ = 0
+        self.latest_artifact_detections_ = None
+        self.detection_image_pub_ = self.create_publisher(Image, '/artifact_detection/image', 1)
+        self.image_detections_pub_ = self.create_publisher(Image, '/detections_image', 1)
+        self.artifact_detections_sub_ = self.create_subscription(DetectionArray, '/yolo/detections', self.artifact_detections_callback, 1,)
+
         # Prepare image capture
+        data_directory = self.declare_parameter('data_directory', '').value
         self.activate_rgb_capture_ = self.declare_parameter('activate_rgb_capture', False).value
         self.activate_depth_capture_ = self.declare_parameter('activate_depth_capture', False).value
         self.activate_processed_depth_capture_ = self.declare_parameter('activate_processed_depth_capture', False).value
-        self.rgb_capture_directory_ = Path(self.declare_parameter('rgb_image_capture_directory', '/tmp/rgb').value)
-        self.depth_capture_directory_ = Path(self.declare_parameter('depth_image_capture_directory', '/tmp/depth').value)
-        self.processed_depth_capture_directory_ = Path(self.declare_parameter('processed_depth_image_capture_directory', '/tmp/processed_depth').value)
+        self.rgb_capture_directory_ =   Path(data_directory) / Path(self.declare_parameter('rgb_image_capture_directory', '/tmp/rgb').value)
+        self.depth_capture_directory_ = Path(data_directory) / Path(self.declare_parameter('depth_image_capture_directory', '/tmp/depth').value)
+        self.processed_depth_capture_directory_ = Path(data_directory) / Path(self.declare_parameter('processed_depth_image_capture_directory', '/tmp/processed_depth').value)
         self.capture_requested_ = False
         self.capture_sub_ = self.create_subscription(Empty, '/capture_image', self.capture_callback, 10)
 
@@ -148,14 +157,56 @@ class CaveExplorer(Node):
         self.main_loop_timer_ = self.create_timer(0.2, self.main_loop)
     
     def get_pose_2d(self):
-        """Get the 2d pose of the robot"""
+        """
+        Get the 2d pose of the robot.
+        """
 
-        # Lookup the latest transform
+        # Lookup the transform
         try:
-            t = self.tf_buffer.lookup_transform(
+            t = self.tf_buffer.lookup_transform_async(
                 'map',
                 'base_link',
-                rclpy.time.Time())
+                rclpy.time.Time()
+            )
+        except TransformException as ex:
+            self.get_logger().error(f'Could not transform: {ex}')
+            return
+
+        # Return a Pose2D message
+        pose = Pose2D()
+        pose.x = t.transform.translation.x
+        pose.y = t.transform.translation.y
+
+        qw = t.transform.rotation.w
+        qz = t.transform.rotation.z
+
+        if qz >= 0.:
+            pose.theta = wrap_angle(2. * math.acos(qw))
+        else: 
+            pose.theta = wrap_angle(-2. * math.acos(qw))
+
+        self.get_logger().warn(f'Pose: {pose}')
+
+        return pose
+
+    async def get_pose_2d_async(self, stamp=None):
+        """
+        Get the 2d pose of the robot.
+        Optionally, a specific timestamp can be provided to get the robot's pose at that time.
+        """
+        lookup_time = (
+            rclpy.time.Time.from_msg(stamp)
+            if stamp is not None
+            else rclpy.time.Time()
+        )
+
+        # Lookup the transform
+        try:
+            t = await self.tf_buffer.lookup_transform_async(
+                'map',
+                'base_link',
+                lookup_time
+            )
         except TransformException as ex:
             self.get_logger().error(f'Could not transform: {ex}')
             return
@@ -195,20 +246,19 @@ class CaveExplorer(Node):
         # self.get_logger().warn(f'  xlim = [{self.xlim_[0]:.2f}, {self.xlim_[1]:.2f}]')
         # self.get_logger().warn(f'  ylim = [{self.ylim_[0]:.2f}, {self.ylim_[1]:.2f}]')
     
-    def image_callback(self, rgb_msg, depht_msg):
+    def image_callback(self, rgb_msg, depth_msg):
         """
         Recieve an RGB image.
-        Use this method to detect artifacts of interest.
-        
-        A simple method has been provided to begin with for detecting stop signs (which is not what we're actually looking for) 
-        adapted from: https://www.geeksforgeeks.org/detect-an-object-with-opencv-python/
+        Orchestrate image capture for the artefact detection pipeline.
+        Publishes the captured images to the appropriate topics for further processing.
         """
+
         # Copy the image messages to a cv image
         rgb_image = self.cv_bridge_.imgmsg_to_cv2(rgb_msg, desired_encoding='passthrough')
-        depth_image = self.cv_bridge_.imgmsg_to_cv2(depht_msg, desired_encoding='passthrough')
+        depth_image = self.cv_bridge_.imgmsg_to_cv2(depth_msg, desired_encoding='passthrough')
         
         # Process depth image to human readable format
-        processed_depth_image = (np.clip((depth_image.astype(np.float64) / 10.0), 0.0, 1.0) * 255.0).astype(np.uint8)
+        processed_depth_image = (np.clip((depth_image.astype(np.float64) / 15.0), 0.0, 1.0) * 255.0).astype(np.uint8)
 
         # Capture images if an image capture has been requested
         if self.capture_requested_:
@@ -231,36 +281,96 @@ class CaveExplorer(Node):
 
             self.capture_requested_ = False
 
-        # Retrieve the pre-trained model
-        stop_sign_model = self.computer_vision_model_
+        # Forward every N-th synchronized RGB/depth pair to yolo_ros.
+        self.detection_image_count_ += 1
+        if self.detection_image_count_ >= self.detection_every_n_images_:
+            key = (rgb_msg.header.stamp.sec, rgb_msg.header.stamp.nanosec)
+            self.detection_images_[key] = (rgb_msg, depth_msg)
+            while len(self.detection_images_) > 10:
+                del self.detection_images_[next(iter(self.detection_images_))]
+            self.detection_image_pub_.publish(rgb_msg)
+            self.detection_image_count_ = 0
 
-        # Detect artifacts in the image
-        # The minSize is used to avoid very small detections that are probably noise
-        detections = stop_sign_model.detectMultiScale(rgb_image, minSize=(20,20))
 
-        # You can set "artifact_found_" to true to signal to "main_loop" that you have found a artifact
-        # You may want to communicate more information
-        # Since the "image_callback" and "main_loop" methods can run at the same time you should protect any shared variables
-        # with a mutex
-        # "artifact_found_" doesn't need a mutex because it's an atomic
-        num_detections = len(detections)
+    async def artifact_detections_callback(self, msg):
+        """
+        Receive artifact detections and process them for localization and visualization.
+        """
+        self.latest_artifact_detections_ = msg
+        self.artifact_found_ = bool(msg.detections)
 
-        if num_detections > 0:
-            self.artifact_found_ = True
-        else:
-            self.artifact_found_ = False
+        # If no artifacts are found, skip further processing
+        if not self.artifact_found_:
+            return
 
-        # Draw a bounding box rectangle on the image for each detection
-        for(x, y, width, height) in detections:
-            cv2.rectangle(rgb_image, (x, y), (x + height, y + width), (0, 255, 0), 5)
+        # Log artifact finding
+        self.get_logger().info('Artifact found!')
 
-        # Publish the image with the detection bounding boxes
-        image_detection_message = self.cv_bridge_.cv2_to_imgmsg(rgb_image, encoding="rgb8")
-        self.image_detections_pub_.publish(image_detection_message)
+        # Retrieve the corresponding image for the detections based on the timestamp key
+        key = (msg.header.stamp.sec, msg.header.stamp.nanosec)
+        images = self.detection_images_.pop(key, None)
+        if images is None:
+            return
+        
+        # Unpack the images
+        rgb_msg, depth_msg = images
+        rgb_image = self.cv_bridge_.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
+        depth_image = self.cv_bridge_.imgmsg_to_cv2(depth_msg, desired_encoding='passthrough')
+        
+        # Annotate the image with the detections and publish it
+        annotated = self.annotate_image(rgb_image, msg.detections)
+        annotated_msg = self.cv_bridge_.cv2_to_imgmsg(annotated, encoding='bgr8')
+        annotated_msg.header = msg.header
+        self.image_detections_pub_.publish(annotated_msg)
 
-        if self.artifact_found_:
-            self.get_logger().info('Artifact found!')
-            self.localise_artifact()
+        # Get robot pose at the time of the image capture
+        robot_pose = await self.get_pose_2d_async(depth_msg.header.stamp)
+        if robot_pose is None:
+            self.get_logger().warn(f'localise_artifact: robot_pose is None.')
+            return
+        
+        # Localise artifact
+        for detection in msg.detections:
+            self.localise_artifact(robot_pose, depth_image, detection)
+
+
+    def annotate_image(self, image, detections):
+        """
+        Helper function to annotate an image with bounding boxes for detected artifacts.
+        """
+        # BGR colors for classes 0–5
+        colors = [
+            (144, 238, 144),  # Alien
+            (0, 100, 0),      # Gem
+            (0, 0, 255),      # Sign
+            (230, 216, 173),  # Sphere
+            (255, 0, 0),      # Mushroom
+            (255, 200, 0),    # Minerals
+        ]
+
+        annotated = image.copy()
+
+        for detection in detections:
+            box = detection.bbox
+            x, y = box.center.position.x, box.center.position.y
+            w, h = box.size.x, box.size.y
+
+            start = (round(x - w / 2), round(y - h / 2))
+            end = (round(x + w / 2), round(y + h / 2))
+
+            class_id = detection.class_id
+            color = colors[class_id] if 0 <= class_id < len(colors) else (255, 255, 255)
+            name = detection.class_name or f'Klasse {class_id}'
+
+            cv2.rectangle(annotated, start, end, color, 2)
+            cv2.putText(
+                annotated, name,
+                (max(0, start[0]), max(20, start[1] - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA,
+            )
+
+        return annotated
+
 
     def capture_callback(self, msg):
         """
@@ -271,45 +381,85 @@ class CaveExplorer(Node):
         self.capture_requested_ = True
         self.get_logger().info('Requesting image capture.')
 
-    def localise_artifact(self):
+
+    def localise_artifact(self, robot_pose, depth_image, detection):
         """
-        INCOMPLETE:
         Compute the location of the artifact
         Save it to a list, publish rviz marker
-        This version just uses the robot location rather than the artifact location
-        You can find other examples of using RViz markers in the previous assignments template code
         """
 
-        # Current location of the robot
-        robot_pose = self.get_pose_2d()
+        # Camera parameters
+        HORIZONTAL_AOV = 2/3 * math.pi
+        IMAGE_WIDTH = 720
+        FOCAL_LENGTH = IMAGE_WIDTH / (2.0 * math.tan(HORIZONTAL_AOV / 2.0))
+        
+        # Calculate artefact angle from detection coordinates and image AOV (120°)
+        box = detection.bbox
+        cx, cy = round(box.center.position.x), round(box.center.position.y)
+        artifact_bearing = math.atan2((IMAGE_WIDTH/2 - cx), FOCAL_LENGTH)
+        absolut_artifact_angle = wrap_angle(robot_pose.theta + artifact_bearing)
 
-        if robot_pose == None:
-            self.get_logger().warn(f'localise_artifact: robot_pose is None.')
+        # Calculate the artifact distance from the depth image
+        artifact_depth = float(depth_image[cy, cx])
+        if not np.isfinite(artifact_depth) or artifact_depth <= 0:
             return
+        artifact_distance = artifact_depth / math.cos(artifact_bearing)
 
-        # Compute the location of the artifact
-        # This is currently INCOMPLETE
+        # Calculate the artifact's position in the world frame.
         point = Point()
-        point.x = robot_pose.x
-        point.y = robot_pose.y
+        point.x = robot_pose.x + artifact_distance * math.cos(absolut_artifact_angle)
+        point.y = robot_pose.y + artifact_distance * math.sin(absolut_artifact_angle)
         point.z = 1.0
 
-        # Save it
+        # Save the artifact's position to the list
         self.artifact_locations_.append(point)
 
         # Publish the markers
         self.publish_artifact_markers()
 
+
     def publish_artifact_markers(self):
         """ Publish the artifact location markers"""
 
-        # Update the locations
-        self.marker_artifacts_.points = self.artifact_locations_
+        # Merge the artifact points
+        merged_points = self.merge_points(self.artifact_locations_)
+
+        # Update the locations with the merged points
+        self.marker_artifacts_.points = merged_points
 
         # Create and publish the MarkerArray
         marker_array = MarkerArray()
         marker_array.markers = [self.marker_artifacts_]
         self.marker_pub_.publish(marker_array)
+
+
+    def merge_points(self, points):
+        """
+        Merge the given points to identify single artifacts.
+        'Density-Based Spatial Clustering of Applications with Noise' is used to group nearby points into clusters.
+        """
+        points = np.array([[p.x, p.y, p.z] for p in points])
+
+        # Perform DBSCAN clustering
+        clustering = DBSCAN(
+            eps=3.0,       
+            min_samples=1
+        ).fit(points)
+
+        labels = clustering.labels_
+        merged_points = []
+
+        # Iterate over each cluster label and merge the points
+        for label in np.unique(labels):
+            cluster = points[labels == label]
+            merged_points.append(cluster.mean(axis=0))
+
+        merged_points = [
+            Point(x=float(x), y=float(y), z=float(z))
+            for x, y, z in np.array(merged_points)
+        ]
+
+        return merged_points
 
 
     def planner_go_to_pose2d(self, pose2d):

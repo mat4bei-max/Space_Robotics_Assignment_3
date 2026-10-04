@@ -4,6 +4,15 @@ cave_explorer_node:
     activate_rgb_capture: True
     activate_depth_capture: True
     activate_processed_depth_capture: True
-    rgb_image_capture_directory: "/home/mat4b/space_robotics/assignment_3_ws/detection_training/data/raw_rgb_images"
-    depth_image_capture_directory: "/home/mat4b/space_robotics/assignment_3_ws/detection_training/data/raw_depth_images"
-    processed_depth_image_capture_directory: "/home/mat4b/space_robotics/assignment_3_ws/detection_training/data/processed_depth_images"
+    rgb_image_capture_directory: "raw_rgb_images"
+    depth_image_capture_directory: "raw_depth_images"
+    processed_depth_image_capture_directory: "processed_depth_images"
+    detection_every_n_images: 2
+
+/yolo/yolo_node:
+  ros__parameters:
+    model: "models/trained_models/Artefact_detection_model_v2/train/weights/best.pt"
+    device: "cuda:0"
+    threshold: 0.7
+    image_reliability: 1
+    yolo_encoding: bgr8
