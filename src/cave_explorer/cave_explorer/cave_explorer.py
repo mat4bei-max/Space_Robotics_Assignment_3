@@ -136,6 +136,7 @@ class CaveExplorer(Node):
         # Prepare artifact detection
         self.detection_images_ = {}
         self.detection_every_n_images_ = self.declare_parameter('detection_every_n_images', 1).value
+        self.depth_detection_ = self.declare_parameter('use_depth_detection', False).value
         self.detection_image_count_ = 0
         self.latest_artifact_detections_ = None
         self.detection_image_pub_ = self.create_publisher(Image, '/artifact_detection/image', 1)
@@ -288,7 +289,16 @@ class CaveExplorer(Node):
             self.detection_images_[key] = (rgb_msg, depth_msg)
             while len(self.detection_images_) > 10:
                 del self.detection_images_[next(iter(self.detection_images_))]
-            self.detection_image_pub_.publish(rgb_msg)
+
+            # Publish the appropriate image (depth or RGB) for artifact detection.
+            if self.depth_detection_:
+                processed_depth_image = cv2.cvtColor(processed_depth_image, cv2.COLOR_GRAY2BGR)
+                depth_msg = self.cv_bridge_.cv2_to_imgmsg(processed_depth_image, encoding='bgr8')
+                depth_msg.header = rgb_msg.header
+                self.detection_image_pub_.publish(depth_msg)
+            else:
+                self.detection_image_pub_.publish(rgb_msg)
+
             self.detection_image_count_ = 0
 
 
@@ -318,7 +328,13 @@ class CaveExplorer(Node):
         depth_image = self.cv_bridge_.imgmsg_to_cv2(depth_msg, desired_encoding='passthrough')
         
         # Annotate the image with the detections and publish it
-        annotated = self.annotate_image(rgb_image, msg.detections)
+        if self.depth_detection_:
+            detection_image = (np.clip((depth_image.astype(np.float64) / 15.0), 0.0, 1.0) * 255.0).astype(np.uint8)
+            detection_image = cv2.cvtColor(detection_image, cv2.COLOR_GRAY2BGR)
+            annotated = self.annotate_image(detection_image, msg.detections)
+        else:
+            annotated = self.annotate_image(rgb_image, msg.detections)
+
         annotated_msg = self.cv_bridge_.cv2_to_imgmsg(annotated, encoding='bgr8')
         annotated_msg.header = msg.header
         self.image_detections_pub_.publish(annotated_msg)

@@ -1,6 +1,6 @@
 setup:
-  model_name: Artefact_detection_model_v2
-  dataset: rgb_full_dataset_1/data.yaml
+  model_name: Artefact_detection_model_depth_v2
+  dataset: depth_full_dataset_2/data.yaml
   yolo_base_model: yolo26n.pt
 
 hyperparameters:

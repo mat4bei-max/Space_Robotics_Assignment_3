@@ -43,6 +43,8 @@
 \lstset{style=pythoncode}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.5em}
+% Allow extra line-breaking flexibility for long inline code identifiers.
+\setlength{\emergencystretch}{2em}
 \setstretch{1.05}
 \hypersetup{colorlinks=true, urlcolor=blue, linkcolor=black}
 
@@ -119,26 +121,13 @@ TBA
 \newpage
 
 \subsection{Perception 1: Collect an Image Dataset of the Artefacts}
-The goal of this task was to collect images of the artefacts to create a dataset
-for the subsequent object detection task. The first step was to implement a
-manual capture mechanism so that specific, relevant scenes could be selected
-and saved. This was achieved by adding a ROS~2 subscriber that listens for
-\texttt{std\_msgs/msg/Empty} messages. Publishing one of these messages manually
-triggers the \texttt{capture\_callback} method shown below, which sets the
-\texttt{capture\_requested\_} flag to \texttt{True} and logs the request.
+The goal of this task was to create an image dataset for artefact detection.
+A subscriber was added to the \texttt{CaveExplorer} node so that image capture
+could be requested by manually publishing a \texttt{std\_\allowbreak msgs/msg/Empty}
+message. The callback below sets a flag, prompting the next image callback to
+save the images and reset the flag. A new depth subscriber was synchronised with the existing RGB
+subscriber so that each matching image pair is processed by a single callback.
 
-The system receives new camera images every 0.2 seconds. When a capture has been
-requested, the image callback saves the image data and then resets the request
-flag. This allows individual scenes to be saved without storing every frame
-from the camera stream.
-
-Since depth information could also be useful for the later detection tasks,
-the existing image processing was extended by adding a depth image subscriber.
-The RGB and depth subscribers were synchronised so that a combined callback
-is triggered when corresponding images are available. In addition to the depth
-data, a depth image suitable for visual inspection can be saved. A new
-configuration file, \texttt{detection\_config.yaml}, was added to specify the
-output directories and which image outputs should be saved.
 
 \begin{lstlisting}[caption={Implementation of capture callback}, label={lst:task1}]
     def capture_callback(self, msg):
@@ -146,32 +135,187 @@ output directories and which image outputs should be saved.
         self.get_logger().info('Requesting image capture.')
 \end{lstlisting}
 
+To investigate how many images were needed, test models were trained on
+subsets containing 10, 20 and 30 images of the alien artefact only.
+Performance improved with dataset size, with the 30-image dataset producing
+the best results among the tested sizes. Precision and recall both reached
+1.0 on the test split (Figure~\ref{fig:detection-performance}). Based on this result, at least
+30 images were collected per artefact class. The model and training procedure
+are described in more detail in Perception 2.
+
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.42\textwidth]{example_image.jpg}
-    \caption{Example image from the collected dataset.}
+    \includegraphics[width=0.8\textwidth]{detection_performance.png}
+    \caption{Detection performance for the alien artefact with increasing
+    dataset size. Precision and recall reach 1.0 on the test split at 30 images.}
+    \label{fig:detection-performance}
+\end{figure}
+
+The final dataset contains 203 images, including scenes with multiple artefacts
+and a few negative examples without artefacts to help reduce false positives.
+Some images contain multiple instances of a class, resulting in more than
+30 instances per class. Figure~\ref{fig:example-image} shows a corresponding
+RGB and depth image pair containing the gem and mushroom artefacts.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.48\textwidth]{example_rgb_image.jpg}
+    \hfill
+    \includegraphics[width=0.48\textwidth]{example_depth_image.jpg}
+    \caption{Example RGB image (left) and corresponding depth image (right)
+    from the collected dataset, showing the gem and mushroom artefacts.}
     \label{fig:example-image}
 \end{figure}
 
+
 \subsection{Perception 2: Detect Artefacts with Computer Vision}
-% TF_OLD_DATA ignoring data from the past for frame odom at time 93.450000 according to authority Authority undetectable
-% slow inference (longer than 0.2s interval) blocked callback and lead to missing data of some frames
-% initally normal ultralytics & inference directly in callback of cave explorer node
-% now seperate artifact detection is handled in its own node -> ros_yolo
-% also interval reduction of detection possible to improve performance
+The goal of this task was to train and integrate an artefact detector using
+the dataset collected in Perception 1. The Ultralytics YOLO framework was used
+with a pretrained YOLO26 nano model to keep inference time and computational
+requirements low. The data was divided into training, validation and test sets
+for updating model weights, monitoring training and evaluating the final model,
+respectively. Several hyperparameter combinations were tested before selecting
+a learning rate of 0.002, a batch size of 4 and the AdamW optimiser.
+
+Separate models were trained for RGB and depth images. For depth detection,
+distances from 0 to 15 metres were mapped to greyscale values to improve contrast
+between nearby artefacts. Annotations beyond this range were removed.
+Stop-sign annotations also required removal because the sign is
+a texture on a flat surface and cannot be distinguished in depth images.
+
+Table~\ref{tab:detection-metrics} summarises the saved test results for the final RGB
+and depth models. The depth model achieved a precision of 1.0 and a higher
+mAP@50--95, while the RGB model achieved slightly higher recall and mAP@50.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lrr}
+        \hline
+        Metric & RGB model & Depth model \\
+        \hline
+        Precision & 0.985 & 1.000 \\
+        Recall & 0.981 & 0.975 \\
+        mAP@50 & 0.977 & 0.971 \\
+        mAP@50--95 & 0.796 & 0.840 \\
+        \hline
+    \end{tabular}
+    \caption{Test-set detection metrics from the saved model evaluations.}
+    \label{tab:detection-metrics}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.49\textwidth]{rgb_confusion_matrix.png}
+    \hfill
+    \includegraphics[width=0.49\textwidth]{depth_v2_confusion_matrix.png}
+    \caption{Test-set confusion matrices for the RGB model (left) and the depth model
+    (right). Both models miss one mushroom; the RGB model also produces one false-positive
+    mineral detection. The depth model produces no false positives, and its stop-sign
+    row and column are empty because this class was excluded from the depth labels.}
+    \label{fig:detection-confusion-matrices}
+\end{figure}
+
+Integrating the detection into ROS proved difficult. Initially, the detection
+was implemented to run directly inside \texttt{image\_\allowbreak callback()} in the \texttt{CaveExplorer}
+node. Processing took longer than the 0.2-second image interval, blocking the
+callback and causing frames to be missed. Inference was therefore moved to a
+separate node using the \texttt{ros\_\allowbreak yolo} package. The image callback publishes
+the selected RGB or depth image to this node, and returned detections trigger
+\texttt{artifact\_\allowbreak detections\_\allowbreak callback}. This callback retrieves the corresponding
+image and robot pose at capture time, then coordinates image annotation and
+artefact localisation, as described in Perception 3. Colour-coded bounding
+boxes and class labels are published with the images for display in RViz.
+
+Both RGB and depth detections where implemented and the input modality is selected using the \texttt{use\_\allowbreak depth\_\allowbreak detection} parameter in
+\texttt{detection\_\allowbreak config.yaml}.
+Since detection still affected runtime performance,
+\texttt{detection\_\allowbreak every\_\allowbreak n\_\allowbreak images} was added to reduce processing frequency
+by skipping images between detections. During a cave traversal with a detection
+confidence threshold of 0.7, no false positives were observed with either model.
+
+Figure~\ref{fig:rgb-depth-detection} illustrates the differences in detection performance between the
+inputs. Both models detect the nearby mushroom with high confidence, while
+only RGB detects the stop sign and distant sphere. The stop sign has no distinct
+depth appearance, and the sphere lies beyond the selected depth range.
+During exploration, depth detection nevertheless identified all
+artefacts correctly when they were within range.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.48\textwidth]{rgb_detection.png}
+    \hfill
+    \includegraphics[width=0.48\textwidth]{depth_detection.png}
+    \caption{Artefact detections using RGB (left) and depth (right).
+    Both models detect the mushroom; the stop sign and distant sphere are
+    detected only in the RGB image.}
+    \label{fig:rgb-depth-detection}
+\end{figure}
 
 \subsection{Perception 3: Artefact Localisation and Display}
-% using center coordinates of the detected bounding box to estimate the artifact's position.
-% center y together with camera fovis used to calc bearing
-% artifact distance is calculated by reading depth value at cy & cx, then transforming to distance to robot
-% artifact distance & angle are then used to calc artefact position together with robot position
-% mistake: used robot position at time of artifact localisation -> after time intensive detection model inference. This led to incorrect artifact positions being calculated, which was especially noticeable while robot was turning
-% extended get_pose_2d() function to include timestamp parameter for accurate pose retrieval
-% required to make detection callback & get_pose_2d() asynchronous, since i got error message "Lookup would require extrapolation into the future." -> TF message apparently delayed
-% to combine different observations of the same artifact to a single estimated position, a Density-Based Spatial Clustering (DBSCAN) algorithm from the scikit-learn library is used.
-% DBSCAN groups nearby points into clusters based on a specified distance threshold (eps) and a minimum number of points (min_samples). This helps in reducing noise and improving the accuracy of artifact localization.
-% to find the optimal distance threshold, multiple values where tested until a value distance of 3 meters lead to the optimal resulte
-% -> In the test run, all observations where clustered perfectly together. Also the "mineral" artefact, consisting of 2 seperate chunks, where clustered perfectly as one artifact, as intended.
+The goal of this task was to estimate the map positions of detected artefacts
+and display them in RViz. The horizontal centre of each bounding box was used
+to calculate the artefact's bearing from the camera's field of view and focal
+length. To calculate the artefact's distance from the camera,
+first the depth value at the bounding-box centre was retrieved from the depth image.
+This depth value was then divided by the cosine of this bearing to obtain the distance.
+Combining this distance and artefact angle with the robot's pose gave the artefact's position
+in the world frame. 
+
+Initially, localisation used the robot's pose at the time the detection result
+was processed. Since model inference introduced a delay, this produced incorrect
+positions, particularly while the robot was turning. To correct this,
+\texttt{get\_\allowbreak pose\_\allowbreak 2d()} was extended to accept the
+image timestamp and retrieve the corresponding pose. TF lookups then sometimes
+failed with ``Lookup would require extrapolation into the future'', indicating
+that the required transform was not yet available. Making the detection callback
+and pose lookup asynchronous allowed the system to wait for the transform.
+
+\newpage
+
+\begin{lstlisting}[caption={Artefact position estimation from a detection and depth image}, label={lst:artefact-localisation}]
+def localise_artifact(self, robot_pose, depth_image, detection):
+
+    # Camera parameters
+    HORIZONTAL_AOV = 2/3 * math.pi
+    IMAGE_WIDTH = 720
+    FOCAL_LENGTH = IMAGE_WIDTH / (2 * math.tan(HORIZONTAL_AOV / 2))
+    
+    # Calculate artefact angle from detection coordinates
+    box = detection.bbox
+    cx, cy = round(box.center.position.x), round(box.center.position.y)
+    bearing = math.atan2((IMAGE_WIDTH/2 - cx), FOCAL_LENGTH)
+    absolute_angle = wrap_angle(robot_pose.theta + bearing)
+
+    # Calculate the artifact distance from the depth image
+    depth = float(depth_image[cy, cx])
+    if not np.isfinite(depth) or depth <= 0:
+        return
+    distance = depth / math.cos(bearing)
+
+    # Calculate the artifact's position in the world frame.
+    point = Point()
+    point.x = robot_pose.x + distance * math.cos(absolute_angle)
+    point.y = robot_pose.y + distance * math.sin(absolute_angle)
+    point.z = 1.0
+
+    # Save the artifact's position to the list
+    self.artifact_locations_.append(point)
+
+    # Publish the markers
+    self.publish_artifact_markers()
+\end{lstlisting}
+
+To archieve usable artifact localizations, repeated observations of the same artefact needed to be combined into a single position estimate.
+This was achieved by using a Density-Based Spatial Clustering approach (DBSCAN) from the
+scikit-learn package. This algorithm groups nearby position estimates using a distance
+threshold and a minimum number of neighbouring points, required to form a core point of a cluster.
+Several distance thresholds were tested, with 3 metres producing the best grouping in
+the test scenario. All observations were assigned to the intended artefact
+clusters in that run, including the two separate chunks of the mineral artefact,
+which were correctly treated as one artefact.
+Figure~\ref{fig:artefact-localisation-clustering} compares the markers before
+and after clustering.
+
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.48\textwidth]{artifact_localisation.png}

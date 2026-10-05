@@ -1,0 +1,8 @@
+{
+  "confidence": 0.3233233233233233,
+  "metrics/precision(B)": 0.8333333333333334,
+  "metrics/recall(B)": 0.8125,
+  "metrics/mAP50(B)": 0.8091666666666666,
+  "metrics/mAP50-95(B)": 0.7172470238095239,
+  "fitness": 0.7172470238095239
+}

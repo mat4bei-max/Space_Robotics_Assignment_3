@@ -8,11 +8,12 @@ cave_explorer_node:
     depth_image_capture_directory: "raw_depth_images"
     processed_depth_image_capture_directory: "processed_depth_images"
     detection_every_n_images: 2
+    use_depth_detection: True
 
 /yolo/yolo_node:
   ros__parameters:
-    model: "models/trained_models/Artefact_detection_model_v2/train/weights/best.pt"
+    model: "models/trained_models/Artefact_detection_model_depth_v2/train/weights/best.pt"
     device: "cuda:0"
-    threshold: 0.7
+    threshold: 0.6
     image_reliability: 1
     yolo_encoding: bgr8
