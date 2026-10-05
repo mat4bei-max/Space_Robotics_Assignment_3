@@ -178,8 +178,8 @@ respectively. Several hyperparameter combinations were tested before selecting
 a learning rate of 0.002, a batch size of 4 and the AdamW optimiser.
 
 Separate models were trained for RGB and depth images. For depth detection,
-distances from 0 to 15 metres were mapped to greyscale values to improve contrast
-between nearby artefacts. Annotations beyond this range were removed.
+distances from 0 to 15 metres were mapped to greyscale values to improve the 
+visual contrast of the artefacts. Annotations beyond this range were removed.
 Stop-sign annotations also required removal because the sign is
 a texture on a flat surface and cannot be distinguished in depth images.
 
