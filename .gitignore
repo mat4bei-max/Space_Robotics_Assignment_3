@@ -4,10 +4,6 @@ install/
 build/
 .venv/
 
-# detection training
-data/
-datasets/
-
 # OS artifacts
 *:Zone.Identifier
 *:mshield
