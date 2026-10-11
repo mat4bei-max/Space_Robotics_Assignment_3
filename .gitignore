@@ -38,3 +38,6 @@ dist/
 *.bbl
 *.blg
 *.synctex.gz
+
+#Yolo ROS
+yolo_ros/
