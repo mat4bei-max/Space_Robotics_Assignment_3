@@ -36,7 +36,8 @@ setup(
     entry_points={
         'console_scripts': [
             'cave_explorer = cave_explorer.cave_explorer:main',
-            'artifact_detector = cave_explorer.artifact_detector:main'
+            'artifact_detector = cave_explorer.artifact_detector:main',
+            'yolo_test = yolo_test.test_node:main'
         ],
     },
 )
