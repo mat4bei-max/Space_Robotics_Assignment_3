@@ -29,3 +29,7 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export SPACE_ROBOTICS_WORKSPACE="$_space_ws"
 cd -- "$_space_ws" || return 1
 unset _space_ws
+
+colcon() {
+    "$SPACE_ROBOTICS_WORKSPACE/.venv/bin/python" /usr/bin/colcon "$@"
+}

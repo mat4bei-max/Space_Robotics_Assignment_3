@@ -2,6 +2,7 @@
 log/
 install/
 build/
+build_cleanup_backups/
 .venv/
 
 # OS artifacts
