@@ -620,17 +620,12 @@ class CaveExplorer(Node):
     def get_neighbours(self, pos):
         x,y = pos
         neighbors = []
-        # origins = self.world_to_grid(self.map_origin[0], self.map_origin[1])
-        # limits = self.world_to_grid(self.xlim_[1], self.ylim_[1])
         for dx in [-1, 0, 1]:
             for dy in [-1, 0, 1]:
                 if dx == 0 and dy == 0:
                     continue
                 nx, ny = x + dx, y + dy
                 width, height = self.occupancy_map.shape
-                # print("x: ", self.xlim_[0], nx, self.xlim_[1])
-                # print("y: ", self.ylim_[0], ny, self.ylim_[1])
-                # if self.xlim_[0] <= nx < self.xlim_[1] and self.ylim_[0] <= ny < self.ylim_[1]:
                 if 0 <= nx < width and 0 <= ny < height:
                     neighbors.append((nx,ny))
         return neighbors
@@ -649,13 +644,8 @@ class CaveExplorer(Node):
         visited = np.zeros(self.occupancy_map.shape, dtype=bool)
         visited_neighbor = np.zeros(self.occupancy_map.shape, dtype=bool)
         frontiers = []
-        # pose = (int((pos.x/self.map_resolution)-self.xlim_[0]),int((pos.y/self.map_resolution)-self.ylim_[0]))
         pose = (0,0)
         queue = deque([pose])
-        # print("POS: ", pos)
-        # print("queue: ", queue)
-        # print("Visit", visited)
-        # visited[(pos)] = True
 
         while queue:
             current_cell = queue.popleft()
@@ -679,8 +669,6 @@ class CaveExplorer(Node):
 
             visited[current_cell] = True
             for neighbor in self.get_neighbours(current_cell):
-                # if not visited[neighbor] and self.occupancy_map[neighbor] >= 0: #FREE space
-                # print(neighbor)
                 if not visited_neighbor[neighbor]:
                     visited_neighbor[neighbor] = True
                     queue.append(neighbor)
@@ -688,7 +676,6 @@ class CaveExplorer(Node):
         return frontiers
 
     def find_nearest_frontier(self):
-        # pose = (math.floor(math.fabs(self.xlim_[0])), math.floor(math.fabs(self.ylim_[0])))
         pose = self.get_pose_2d()
         frontiers = self.find_frontier_clusters()
         if frontiers:
