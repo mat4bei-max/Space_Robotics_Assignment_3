@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import random
+import numpy as np
 from enum import Enum
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from sensor_msgs.msg import Image
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
+from collections import deque # Special lists
 
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
@@ -59,6 +61,7 @@ class PlannerType(Enum):
     GO_TO_FIRST_ARTIFACT = 3
     RANDOM_WALK = 4
     RANDOM_GOAL = 5
+    NEAREST_FRONTIER = 6
     # Add more!
 
 
@@ -242,6 +245,9 @@ class CaveExplorer(Node):
         # Set current limits
         self.xlim_ = [map_origin[0], map_origin[0]+map_width*map_resolution]
         self.ylim_ = [map_origin[1], map_origin[1]+map_height*map_resolution]
+
+        # Get occupancy data - ADDED planning
+        self.occupancy_map = np.array(map_msg.data).reshape((self.map_height,self.map_width))
 
         # self.get_logger().warn('Map received:')
         # self.get_logger().warn(f'  xlim = [{self.xlim_[0]:.2f}, {self.xlim_[1]:.2f}]')
@@ -609,65 +615,165 @@ class CaveExplorer(Node):
         )
         self.planner_go_to_pose2d(goal_pose2d)
 
-    def main_loop(self):
-        """
-        Set the next goal pose and send to the action server
-        See https://docs.nav2.org/concepts/index.html
-        """
+#============================== PLANNING 1 ==============================#
+
+    def get_neighbours(self, pos):
+        x,y = pos
+        neighbors = []
+        # origins = self.world_to_grid(self.map_origin[0], self.map_origin[1])
+        # limits = self.world_to_grid(self.xlim_[1], self.ylim_[1])
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                width, height = self.occupancy_map.shape
+                # print("x: ", self.xlim_[0], nx, self.xlim_[1])
+                # print("y: ", self.ylim_[0], ny, self.ylim_[1])
+                # if self.xlim_[0] <= nx < self.xlim_[1] and self.ylim_[0] <= ny < self.ylim_[1]:
+                if 0 <= nx < width and 0 <= ny < height:
+                    neighbors.append((nx,ny))
+        return neighbors
+
+    def is_frontier_cell(self, pos):
+        if self.occupancy_map[pos] != 0: #FREE space
+            return False
+
         
-        # Don't do anything until SLAM is launched
-        if not self.tf_buffer.can_transform(
-                'map',
-                'base_link',
-                rclpy.time.Time()):
-            self.get_logger().warn('Waiting for transform... Have you launched a SLAM node?')
-            return
+        for neighbor in self.get_neighbours(pos):
+            if self.occupancy_map[neighbor] == -1: #UNKOWN space
+                return True
+        return False
 
-        #######################################################
-        # Update flags related to the progress of the current planner
+    def find_frontier_clusters(self):
+        visited = np.zeros(self.occupancy_map.shape, dtype=bool)
+        visited_neighbor = np.zeros(self.occupancy_map.shape, dtype=bool)
+        frontiers = []
+        # pose = (int((pos.x/self.map_resolution)-self.xlim_[0]),int((pos.y/self.map_resolution)-self.ylim_[0]))
+        pose = (0,0)
+        queue = deque([pose])
+        # print("POS: ", pos)
+        # print("queue: ", queue)
+        # print("Visit", visited)
+        # visited[(pos)] = True
 
-        # Check if previous goal still running
-        if not self.ready_for_next_goal_:
-            # self.get_logger().info(f'Previous goal still running')
-            return
+        while queue:
+            current_cell = queue.popleft()
 
-        self.ready_for_next_goal_ = False
+            if self.is_frontier_cell(current_cell):
+                cluster = [] #find all the frontier nodes in a cluster
+                inner_queue = deque([current_cell])
 
-        if self.planner_type_ == PlannerType.GO_TO_FIRST_ARTIFACT:
-            self.get_logger().info('Successfully reached first artifact!')
-            self.reached_first_artifact_ = True
-        if self.planner_type_ == PlannerType.RETURN_HOME:
-            self.get_logger().info('Successfully returned home!')
-            self.returned_home_ = True
+                while inner_queue:
+                    frontier_cell = inner_queue.popleft()
+                    if visited[(frontier_cell)] == True:
+                        continue
+                    visited[frontier_cell] = True
+                    cluster.append(frontier_cell)
+                    for neighbor in self.get_neighbours(frontier_cell):
+                        if self.is_frontier_cell(neighbor):
+                            inner_queue.append(neighbor)
 
-        #######################################################
-        # Select the next planner to execute
-        # Update this logic as you see fit!
-        if not self.reached_first_artifact_:
-            self.planner_type_ = PlannerType.GO_TO_FIRST_ARTIFACT
-        elif not self.returned_home_:
-            self.planner_type_ = PlannerType.RETURN_HOME
-        else:
-            self.planner_type_ = PlannerType.RANDOM_GOAL
+                if len(cluster) >= 2:
+                    frontiers.append(cluster)
 
-        #######################################################
-        # Execute the planner by calling the relevant method
-        # Add your own planners here!
-        self.get_logger().info(f'Calling planner: {self.planner_type_.name}')
-        if self.planner_type_ == PlannerType.MOVE_FORWARDS:
-            self.planner_move_forwards(10)
-        elif self.planner_type_ == PlannerType.GO_TO_FIRST_ARTIFACT:
-            self.planner_go_to_first_artifact()
-        elif self.planner_type_ == PlannerType.RETURN_HOME:
-            self.planner_return_home()
-        elif self.planner_type_ == PlannerType.RANDOM_WALK:
-            self.planner_random_walk()
-        elif self.planner_type_ == PlannerType.RANDOM_GOAL:
-            self.planner_random_goal()
-        else:
-            self.get_logger().error('No valid planner selected')
-            self.destroy_node()
+            visited[current_cell] = True
+            for neighbor in self.get_neighbours(current_cell):
+                # if not visited[neighbor] and self.occupancy_map[neighbor] >= 0: #FREE space
+                # print(neighbor)
+                if not visited_neighbor[neighbor]:
+                    visited_neighbor[neighbor] = True
+                    queue.append(neighbor)
+        
+        return frontiers
 
+    def find_nearest_frontier(self):
+        # pose = (math.floor(math.fabs(self.xlim_[0])), math.floor(math.fabs(self.ylim_[0])))
+        pose = self.get_pose_2d()
+        frontiers = self.find_frontier_clusters()
+        if frontiers:
+            best_frontier = None
+            min_dist = 9999999
+            for clusters in frontiers:
+                cluster_world_x = []
+                cluster_world_y = []
+                for frontier in clusters:
+                    cluster_world_x.append(self.xlim_[0]+frontier[0]*self.map_resolution)
+                    cluster_world_y.append(self.xlim_[0]+frontier[1]*self.map_resolution)
+                centroid_x = np.mean(np.array(cluster_world_x), axis=0)
+                centroid_y = np.mean(np.array(cluster_world_y), axis=0)
+                centroid = (centroid_x,centroid_y)
+
+                distance = np.linalg.norm(centroid-np.array((pose.x,pose.y)))
+
+                if distance < min_dist:
+                    min_dist = distance
+                    best_frontier = (centroid[0],centroid[1])
+            print(best_frontier)
+            goal = Pose2D(x = best_frontier[0], y = best_frontier[1])
+            self.planner_go_to_pose2d(goal)
+  
+    def main_loop(self):
+            """
+            Set the next goal pose and send to the action server
+            See https://docs.nav2.org/concepts/index.html
+            """
+            
+            # Don't do anything until SLAM is launched
+            if not self.tf_buffer.can_transform(
+                    'map',
+                    'base_link',
+                    rclpy.time.Time()):
+                self.get_logger().warn('Waiting for transform... Have you launched a SLAM node?')
+                return
+    
+            #######################################################
+            # Update flags related to the progress of the current planner
+    
+            # Check if previous goal still running
+            if not self.ready_for_next_goal_:
+                # self.get_logger().info(f'Previous goal still running')
+                return
+    
+            self.ready_for_next_goal_ = False
+    
+            if self.planner_type_ == PlannerType.GO_TO_FIRST_ARTIFACT:
+                self.get_logger().info('Successfully reached first artifact!')
+                self.reached_first_artifact_ = True
+            if self.planner_type_ == PlannerType.RETURN_HOME:
+                self.get_logger().info('Successfully returned home!')
+                self.returned_home_ = True
+    
+            #######################################################
+            # Select the next planner to execute
+            # Update this logic as you see fit!
+            self.planner_type_ = PlannerType.NEAREST_FRONTIER
+            # if not self.reached_first_artifact_:
+            #     self.planner_type_ = PlannerType.GO_TO_FIRST_ARTIFACT
+            # elif not self.returned_home_:
+            #     self.planner_type_ = PlannerType.RETURN_HOME
+            # else:
+            #     self.planner_type_ = PlannerType.RANDOM_GOAL
+    
+            #######################################################
+            # Execute the planner by calling the relevant method
+            # Add your own planners here!
+            self.get_logger().info(f'Calling planner: {self.planner_type_.name}')
+            if self.planner_type_ == PlannerType.MOVE_FORWARDS:
+                self.planner_move_forwards(10)
+            elif self.planner_type_ == PlannerType.GO_TO_FIRST_ARTIFACT:
+                self.planner_go_to_first_artifact()
+            elif self.planner_type_ == PlannerType.RETURN_HOME:
+                self.planner_return_home()
+            elif self.planner_type_ == PlannerType.RANDOM_WALK:
+                self.planner_random_walk()
+            elif self.planner_type_ == PlannerType.RANDOM_GOAL:
+                self.planner_random_goal()
+            elif self.planner_type_ == PlannerType.NEAREST_FRONTIER:
+                self.find_nearest_frontier()
+            else:
+                self.get_logger().error('No valid planner selected')
+                self.destroy_node()
 
         #######################################################
 
