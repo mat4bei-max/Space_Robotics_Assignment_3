@@ -35,6 +35,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'cave_geometry = advanced_functions.cave_geometry_node:main',
             'cave_explorer = cave_explorer.cave_explorer:main',
             'artifact_detector = cave_explorer.artifact_detector:main',
             'yolo_test = yolo_test.test_node:main'

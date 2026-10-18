@@ -51,6 +51,25 @@ class RobustPerceptionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Cross-split'):
                 audit(source)
 
+    def test_combined_dataset_includes_both_effects_and_original_conditions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = self.make_source(root)
+            output = root / 'combined'
+            prepare(SimpleNamespace(source=source, output=output, seed=42, include_combined=True))
+            self.assertEqual(len(list(output.glob('*/test/images/*.png'))), 10)
+            paths = (output / 'mixed_train.txt').read_text().splitlines()
+            self.assertEqual(len(paths), 5)
+            self.assertEqual(sum('/clean/' in p for p in paths), 2)
+            self.assertEqual(sum('/combined_' in p for p in paths), 1)
+            self.assertTrue(all('/train/' in p for p in paths))
+            image = np.zeros((25, 25, 3), dtype=np.uint8)
+            image[:, 12] = 200
+            combined = degrade_image(image, 'combined', 'mild')
+            self.assertEqual(int(combined[0, 12, 0]), 28)
+            self.assertEqual(int(combined[0, 11, 0]), 28)
+            self.assertEqual(int(image[0, 12, 0]), 200)
+
     def test_reject_missing_label(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = self.make_source(Path(tmp))

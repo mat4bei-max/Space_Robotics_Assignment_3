@@ -47,3 +47,6 @@ yolo_ros/
 #Virtual Env for Advanced Functions
 env.bash
 .venv-training/
+QUICK_START.md
+src/cave_explorer/advanced_functions/GEOMETRY.md
+src/cave_explorer/advanced_functions/README.md

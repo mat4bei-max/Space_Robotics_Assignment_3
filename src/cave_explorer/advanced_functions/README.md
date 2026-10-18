@@ -174,3 +174,59 @@ the quantitative comparison and per-class results, and matched before/after
 examples. Explain failure cases, clean-performance tradeoffs, dataset splitting,
 and the simplified degradation model. Disclose AI assistance as required by the
 assignment.
+
+## Combined darkness and blur experiment
+
+`effect:=combined` applies darkness **then** horizontal motion blur to each image.
+The matched severities are (brightness factor, blur pixels): mild (0.7, 5),
+moderate (0.4, 11), severe (0.2, 21). These are three combined conditions,
+not all nine independent severity pairings. Labels and raw depth stay unchanged.
+
+Create a new dataset without modifying the previous experiment:
+
+```bash
+python src/cave_explorer/advanced_functions/robust_perception.py prepare \
+  --include-combined \
+  --reuse-dataset src/cave_explorer/advanced_functions/runs/rgb_robust_v1 \
+  --output src/cave_explorer/advanced_functions/runs/rgb_robust_combined_v1
+```
+
+`--reuse-dataset` is optional. It hard-links existing images only after verifying
+source split/hash and exact generated pixels, saving disk space. Treat generated
+images as immutable because linked files share storage. Labels are copied.
+The combined dataset uses 40% clean, 20% darkness-only, 20% blur-only and 20%
+combined entries in training and validation. Ten fixed evaluation conditions
+cover clean, six individual effects, and three combined effects. Earlier datasets
+remain supported: evaluation reads conditions from each dataset's manifest.
+
+Train a separate model from the same original RGB checkpoint as the previous
+robust experiment (the default `--weights`), so the old robust model is preserved:
+
+```bash
+python src/cave_explorer/advanced_functions/robust_perception.py train \
+  --dataset src/cave_explorer/advanced_functions/runs/rgb_robust_combined_v1 \
+  --output src/cave_explorer/advanced_functions/runs/train_combined_v1 \
+  --device 0
+```
+
+Compare all three models on identical conditions:
+
+```bash
+python src/cave_explorer/advanced_functions/robust_perception.py evaluate \
+  --dataset src/cave_explorer/advanced_functions/runs/rgb_robust_combined_v1 \
+  --previous-robust src/cave_explorer/advanced_functions/runs/train/train/weights/best.pt \
+  --robust src/cave_explorer/advanced_functions/runs/train_combined_v1/train/weights/best.pt \
+  --output src/cave_explorer/advanced_functions/runs/comparison_combined_v1 \
+  --device 0
+```
+
+The comparison plot includes all three models. Thresholds are reselected for each
+model using the new mixed validation distribution and frozen for evaluation.
+These may differ from the original experiment. More samples per epoch also mean
+this is not a strictly equal-optimisation-budget ablation. The existing test scenes
+have already been inspected; treat this extension as exploratory and use a fresh
+held-out capture sequence for stronger confirmation of generalisation.
+
+For the live launch, use the new model path and `effect:=combined`, with your
+chosen `severity` and validation-selected `threshold`. Use
+`enable_planning:=true` alongside the navigation launch for exploration.

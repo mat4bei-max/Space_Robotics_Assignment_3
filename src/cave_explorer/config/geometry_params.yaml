@@ -1,0 +1,16 @@
+cave_geometry:
+  ros__parameters:
+    robot_frame: base_link
+    robot_radius: 0.5
+    safety_margin: 0.1
+    free_threshold: 25
+    update_period: 2.0
+    display_max_clearance: 10.0
+    # Widths/lengths in metres. Relative necks may exceed narrow_width.
+    narrow_width: 3.0
+    min_length: 1.2
+    context_distance: 6.0
+    bottleneck_ratio: 0.75
+    min_contrast: 0.6
+    merge_distance: 2.0
+    unknown_margin: 0.6

@@ -10,6 +10,7 @@ Panels:
         - /Odometry Path1/Shape1
         - /MarkerArray1
         - /MarkerArray1/Status1
+        - /Cave Geometry1
       Splitter Ratio: 0.5
     Tree Height: 178
   - Class: rviz_common/Selection
@@ -578,6 +579,39 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /marker_array_artifacts
       Value: true
+    - Class: rviz_common/Group
+      Name: Cave Geometry
+      Enabled: true
+      Displays:
+        - Class: rviz_default_plugins/Map
+          Name: Clearance
+          Enabled: true
+          Alpha: 0.5
+          Color Scheme: costmap
+          Draw Behind: false
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /cave_geometry/clearance
+          Use Timestamp: false
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Name: Geometry Features
+          Enabled: true
+          Namespaces:
+            widest_accessible_area: true
+            cave_centreline: true
+            narrow_passages: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /cave_geometry/features
+          Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -623,8 +657,14 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Angle: -1.5757960081100464
-      Class: rviz_default_plugins/TopDownOrtho
+      Class: rviz_default_plugins/Orbit
+      Distance: 65
+      Focal Point:
+        X: 20.150609970092773
+        Y: 20.293392181396484
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -633,11 +673,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 13.284460067749023
+      Pitch: 1.55
+      Yaw: 0
       Target Frame: map
-      Value: TopDownOrtho (rviz_default_plugins)
-      X: 20.150609970092773
-      Y: 20.293392181396484
+      Value: Orbit (rviz_default_plugins)
     Saved: ~
 Window Geometry:
   Camera RGB:

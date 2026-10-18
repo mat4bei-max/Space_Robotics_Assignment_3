@@ -79,21 +79,36 @@ def prepare(args):
         raise ValueError(f"Output already exists; choose a new directory: {output}")
     names, records = audit(source)
     rng = np.random.default_rng(args.seed)
+    reusable = {}
+    if getattr(args, 'reuse_dataset', None):
+        old = json.loads((args.reuse_dataset / 'manifest.json').read_text())
+        reusable = {(entry['split'], entry['sha256']): entry['variants'] for entry in old['images']}
+    conditions = dict(CONDITIONS)
+    include_combined = getattr(args, 'include_combined', False)
+    if include_combined:
+        conditions.update({f'combined_{level}': ('combined', level)
+                           for level in ('mild', 'moderate', 'severe')})
     manifest = {"source": str(source), "seed": args.seed,
-                "conditions": CONDITIONS, "images": [],
+                "conditions": conditions, "images": [],
+                "combined_order": "darkness_then_horizontal_blur",
+                "mixture": "40% clean, 20% darkness, 20% blur, 20% combined" if include_combined
+                           else "50% clean, 25% darkness, 25% blur",
                 "note": "Exact duplicates checked; review capture sequences for near-duplicate leakage."}
-    # Four entries per training source: two clean, one darkness, one blur.
-    # Validation is balanced across the same four families; tests stay separate.
+    # Two clean entries, one darkness, one blur, and optionally one combined.
+    # Validation uses the same mixture; tests stay separate.
     mixtures = {split: [] for split in ("train", "val")}
     for split, entries in records.items():
         for index, (image_path, label, digest) in enumerate(entries):
             original = cv2.imread(str(image_path))
             paths = {}
-            for condition, (effect, severity) in CONDITIONS.items():
+            for condition, (effect, severity) in conditions.items():
                 target = output / condition / split / "images" / f"{index:06d}_{image_path.stem}.png"
                 target.parent.mkdir(parents=True, exist_ok=True)
                 pixels = degrade_image(original, effect, severity)
-                if not cv2.imwrite(str(target), pixels):
+                reuse = reusable.get((split, digest), {}).get(condition)
+                if reuse and np.array_equal(cv2.imread(reuse), pixels):
+                    target.hardlink_to(reuse)
+                elif not cv2.imwrite(str(target), pixels):
                     raise OSError(f"Cannot write {target}")
                 target_label = target.parent.parent / "labels" / (target.stem + ".txt")
                 target_label.parent.mkdir(parents=True, exist_ok=True)
@@ -103,11 +118,13 @@ def prepare(args):
                 mixtures[split].extend([paths["clean"], paths["clean"],
                     paths[f"darkness_{rng.choice(['mild', 'moderate', 'severe'])}"],
                     paths[f"motion_blur_{rng.choice(['mild', 'moderate', 'severe'])}"]])
+                if include_combined:
+                    mixtures[split].append(paths[f"combined_{rng.choice(['mild', 'moderate', 'severe'])}"])
             manifest["images"].append({"split": split, "source": str(image_path),
                                        "sha256": digest, "variants": paths})
     for split, paths in mixtures.items():
         (output / f"mixed_{split}.txt").write_text("\n".join(paths) + "\n")
-    for condition in CONDITIONS:
+    for condition in conditions:
         write_yaml(output / f"{condition}.yaml", {
             "path": str(output / condition), "train": "train/images",
             "val": "val/images", "test": "test/images", "names": names})
@@ -140,7 +157,10 @@ def evaluate(args):
         raise ValueError(f"Choose a new evaluation output: {output}")
     output.mkdir(parents=True)
     rows, thresholds = [], {}
+    conditions = json.loads((args.dataset / 'manifest.json').read_text())['conditions']
     models = [("baseline", args.baseline)]
+    if args.previous_robust is not None:
+        models.append(("previous_robust", args.previous_robust))
     if args.robust is not None:
         models.append(("robust", args.robust))
     for model_name, weights in models:
@@ -155,7 +175,7 @@ def evaluate(args):
         threshold = float(box.px[np.argmax(box.f1_curve.mean(axis=0))])
         thresholds[model_name] = threshold
         (output / "thresholds.json").write_text(json.dumps(thresholds, indent=2))
-        for condition in CONDITIONS:
+        for condition in conditions:
             metrics = model.val(data=str(args.dataset.resolve() / f"{condition}.yaml"),
                                 split="test", name=f"{model_name}_{condition}", **common)
             box = metrics.box
@@ -181,6 +201,7 @@ def evaluate(args):
     (output / "experiment.json").write_text(json.dumps({
         "baseline": str(args.baseline.resolve()),
         "robust": str(args.robust.resolve()) if args.robust else None,
+        "previous_robust": str(args.previous_robust.resolve()) if args.previous_robust else None,
         "dataset": str(args.dataset.resolve()), "thresholds": thresholds,
         "imgsz": args.imgsz, "confidence_floor": 0.001}, indent=2))
     import matplotlib
@@ -208,6 +229,10 @@ def main():
     prepare_parser.add_argument("--source", type=Path, default=ARTIFACTS / "datasets/rgb_full_dataset_1")
     prepare_parser.add_argument("--output", type=Path, default=HERE / "runs/rgb_robust_v1")
     prepare_parser.add_argument("--seed", type=int, default=42)
+    prepare_parser.add_argument("--include-combined", action="store_true",
+                                help="Add simultaneous darkness and blur at three matched severities")
+    prepare_parser.add_argument("--reuse-dataset", type=Path,
+                                help="Hard-link pixel-verified existing variants to save disk space (same filesystem)")
     prepare_parser.set_defaults(run=prepare)
     for command, function in (("train", train), ("evaluate", evaluate)):
         sub = commands.add_parser(command)
@@ -226,6 +251,8 @@ def main():
         else:
             sub.add_argument("--baseline", type=Path, default=ARTIFACTS / "models/trained_models/Artefact_detection_model_v2/train/weights/best.pt")
             sub.add_argument("--robust", type=Path, help="Omit to establish the baseline before training")
+            sub.add_argument("--previous-robust", type=Path,
+                             help="Also compare the earlier separate-effects robust model")
     args = parser.parse_args()
     args.run(args)
 

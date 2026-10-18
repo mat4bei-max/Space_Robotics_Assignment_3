@@ -72,20 +72,23 @@ def motion_blur_image(image, blur_length):
 def degrade_image(image, effect="none", severity="mild"):
     """Apply one named degradation using the experimental presets.
 
-    effect: 'none', 'darkness', or 'motion_blur'.
+    effect: 'none', 'darkness', 'motion_blur', or 'combined'.
     severity: 'mild', 'moderate', or 'severe'; ignored for 'none'.
 
-    Keep effects separate initially to measure each one's contribution.
+    'combined' applies darkness followed by blur at the same severity.
     The clean baseline also returns a copy so callers can safely annotate it.
     """
     _validate_image(image)
     if effect == "none":
         return image.copy()
-    if effect not in ("darkness", "motion_blur"):
-        raise ValueError("effect must be 'none', 'darkness', or 'motion_blur'")
+    if effect not in ("darkness", "motion_blur", "combined"):
+        raise ValueError("effect must be 'none', 'darkness', 'motion_blur', or 'combined'")
     if severity not in ("mild", "moderate", "severe"):
         raise ValueError("severity must be 'mild', 'moderate', or 'severe'")
 
     if effect == "darkness":
         return darken_image(image, BRIGHTNESS_FACTORS[severity])
+    if effect == "combined":
+        return motion_blur_image(darken_image(image, BRIGHTNESS_FACTORS[severity]),
+                                 MOTION_BLUR_LENGTHS[severity])
     return motion_blur_image(image, MOTION_BLUR_LENGTHS[severity])

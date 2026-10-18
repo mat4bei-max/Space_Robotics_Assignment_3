@@ -21,7 +21,7 @@ def generate_launch_description():
                               choices=['true', 'false'],
                               description='Enable exploration; requires the navigation launch.'),
         DeclareLaunchArgument('effect', default_value='none',
-                              choices=['none', 'darkness', 'motion_blur']),
+                              choices=['none', 'darkness', 'motion_blur', 'combined']),
         DeclareLaunchArgument('severity', default_value='mild',
                               choices=['mild', 'moderate', 'severe']),
         DeclareLaunchArgument('model', default_value=str(default_model)),

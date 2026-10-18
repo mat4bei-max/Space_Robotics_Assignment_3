@@ -11,7 +11,6 @@ import uuid
 import cv2  # OpenCV2
 import rclpy
 import message_filters
-import numpy as np
 from sklearn.cluster import DBSCAN
 from cv_bridge import CvBridge
 from std_msgs.msg import Empty
