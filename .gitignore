@@ -4,6 +4,7 @@ install/
 build/
 build_cleanup_backups/
 .venv/
+env.bash
 
 # OS artifacts
 *:Zone.Identifier
