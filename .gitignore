@@ -23,6 +23,7 @@ __pycache__/
 *.egg-info/
 dist/
 .pytest_cache/
+src/cave_explorer/advanced_functions/runs/
 
 # ROS
 *.o
@@ -42,3 +43,7 @@ dist/
 
 #Yolo ROS
 yolo_ros/
+
+#Virtual Env for Advanced Functions
+env.bash
+.venv-training/
