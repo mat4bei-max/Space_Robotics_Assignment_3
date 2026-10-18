@@ -73,6 +73,7 @@ class CaveExplorer(Node):
         # Variables/Flags for mapping
         self.xlim_ = [0.0, 0.0]
         self.ylim_ = [0.0, 0.0]
+        self.occupancy_map = None
 
         # Variables/Flags for perception
         self.artifact_found_ = False
@@ -169,7 +170,7 @@ class CaveExplorer(Node):
 
         # Lookup the transform
         try:
-            t = self.tf_buffer.lookup_transform_async(
+            t = self.tf_buffer.lookup_transform(
                 'map',
                 'base_link',
                 rclpy.time.Time()
@@ -249,7 +250,8 @@ class CaveExplorer(Node):
         self.ylim_ = [map_origin[1], map_origin[1]+map_height*map_resolution]
 
         # Get occupancy data - ADDED planning
-        self.occupancy_map = np.array(map_msg.data).reshape((self.map_height,self.map_width))
+        self.map_resolution = map_resolution
+        self.occupancy_map = np.array(map_msg.data).reshape((map_height, map_width))
 
         # self.get_logger().warn('Map received:')
         # self.get_logger().warn(f'  xlim = [{self.xlim_[0]:.2f}, {self.xlim_[1]:.2f}]')
@@ -750,6 +752,12 @@ class CaveExplorer(Node):
                 # self.get_logger().info(f'Previous goal still running')
                 return
     
+            if self.occupancy_map is None:
+                self.get_logger().warn(
+                    'Waiting for occupancy map...', throttle_duration_sec=2.0
+                )
+                return
+
             self.ready_for_next_goal_ = False
     
             if self.planner_type_ == PlannerType.GO_TO_FIRST_ARTIFACT:
