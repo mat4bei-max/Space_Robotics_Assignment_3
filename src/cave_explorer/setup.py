@@ -37,7 +37,8 @@ setup(
         'console_scripts': [
             'cave_explorer = cave_explorer.cave_explorer:main',
             'artifact_detector = cave_explorer.artifact_detector:main',
-            'yolo_test = yolo_test.test_node:main'
+            'yolo_test = yolo_test.test_node:main',
+            'demo_controller = cave_explorer.demo_controller:main',
         ],
     },
 )

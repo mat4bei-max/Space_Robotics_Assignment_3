@@ -15,6 +15,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 from cv_bridge import CvBridge
 from std_msgs.msg import Empty
+from std_msgs.msg import String
 from yolo_msgs.msg import DetectionArray
 from geometry_msgs.msg import Pose, Pose2D, PoseStamped, Point
 from nav2_msgs.action import NavigateToPose
@@ -133,6 +134,8 @@ class CaveExplorer(Node):
         # Subscribe to the map topic to get current bounds
         self.map_sub_ = self.create_subscription(OccupancyGrid, 'map',  self.map_callback, 1)
 
+        # Subscribe to controller node
+        self.control_sub_ = self.create_subscription(String, '/control/commands', self.control_callback, 10)
         # Prepate image processing
         self.rgb_image_sub = message_filters.Subscriber(self, Image, 'camera/image', 1)
         self.depth_image_sub = message_filters.Subscriber(self, Image, '/camera/depth/image', 1)
@@ -148,7 +151,7 @@ class CaveExplorer(Node):
         self.detection_image_pub_ = self.create_publisher(Image, '/artifact_detection/image', 1)
         self.image_detections_pub_ = self.create_publisher(Image, '/detections_image', 1)
         self.artifact_detections_sub_ = self.create_subscription(DetectionArray, '/yolo/detections', self.artifact_detections_callback, 1,)
-
+        
         # Prepare image capture
         data_directory = self.declare_parameter('data_directory', '').value
         self.activate_rgb_capture_ = self.declare_parameter('activate_rgb_capture', False).value
@@ -234,6 +237,28 @@ class CaveExplorer(Node):
         self.get_logger().warn(f'Pose: {pose}')
 
         return pose
+
+    def control_callback(self, msg):
+        """
+        Control callback for handling command input.
+        """
+        command = msg.data.strip()
+
+        if command == 'depth_detection':
+            self.depth_detection_ = True
+        elif command == 'rgb_detection':
+            self.depth_detection_ = False
+
+        # elif command == 'degraded_detection':
+        #     self.degraded_detection_ = not self.degraded_detection_
+
+        else:
+            self.get_logger().warn(f'Unknown command: {command}')
+            return
+
+        self.get_logger().info(
+            f'Use Depth Detection={self.depth_detection_}'
+        )
 
     def map_callback(self, map_msg: OccupancyGrid):
         """New map received, so update x and y limits"""
