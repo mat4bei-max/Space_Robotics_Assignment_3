@@ -63,6 +63,7 @@ class PlannerType(Enum):
     RANDOM_WALK = 4
     RANDOM_GOAL = 5
     NEAREST_FRONTIER = 6
+    APPROACH_ARTIFACT = 7
     # Add more!
 
 
@@ -110,6 +111,7 @@ class CaveExplorer(Node):
         # Remember the artifact locations
         # Array of type geometry_msgs.Point
         self.artifact_locations_ = []
+        self.visited_artifact_locations_ = []
 
         # Initialise CvBridge
         self.cv_bridge_ = CvBridge()
@@ -635,9 +637,10 @@ class CaveExplorer(Node):
         )
         self.planner_go_to_pose2d(goal_pose2d)
 
-#============================== PLANNING 1 ==============================#
+#============================== PLANNING Tasks ==============================#
 
-    def get_neighbours(self, pos):
+    def get_neighbours(self, pos): # PLANNER 1
+        """Returns neighbors to a cell"""
         x,y = pos
         neighbors = []
         for dx in [-1, 0, 1]:
@@ -650,7 +653,8 @@ class CaveExplorer(Node):
                     neighbors.append((nx,ny))
         return neighbors
 
-    def is_frontier_cell(self, pos):
+    def is_frontier_cell(self, pos): # PLANNER 1
+        """Returns if a cell is occupied on the map"""
         if self.occupancy_map[pos] != 0: #FREE space
             return False
 
@@ -660,12 +664,13 @@ class CaveExplorer(Node):
                 return True
         return False
 
-    def find_frontier_clusters(self):
+    def find_frontier_clusters(self): # PLANNER 1
+        """Returns array of frontier clusters"""
         visited = np.zeros(self.occupancy_map.shape, dtype=bool)
         visited_neighbor = np.zeros(self.occupancy_map.shape, dtype=bool)
         frontiers = []
-        pose = (0,0)
-        queue = deque([pose])
+        starting_pose = (0,0)
+        queue = deque([starting_pose])
 
         while queue:
             current_cell = queue.popleft()
@@ -684,7 +689,7 @@ class CaveExplorer(Node):
                         if self.is_frontier_cell(neighbor):
                             inner_queue.append(neighbor)
 
-                if len(cluster) >= 2:
+                if len(cluster) >= 3: # only allow clusters of a certain size
                     frontiers.append(cluster)
 
             visited[current_cell] = True
@@ -695,30 +700,53 @@ class CaveExplorer(Node):
         
         return frontiers
 
-    def find_nearest_frontier(self):
+    def planner_nearest_frontier(self): # PLANNER 1
+        """Go to the nearest frontier"""
+
         pose = self.get_pose_2d()
         frontiers = self.find_frontier_clusters()
-        if frontiers:
+
+        if frontiers: # if there are any unexplored frontiers
             best_frontier = None
-            min_dist = 9999999
+            min_dist = 9999999 # A large number
+
             for clusters in frontiers:
                 cluster_world_x = []
                 cluster_world_y = []
+
                 for frontier in clusters:
                     cluster_world_x.append(self.xlim_[0]+frontier[0]*self.map_resolution)
                     cluster_world_y.append(self.xlim_[0]+frontier[1]*self.map_resolution)
+
                 centroid_x = np.mean(np.array(cluster_world_x), axis=0)
                 centroid_y = np.mean(np.array(cluster_world_y), axis=0)
-                centroid = (centroid_x,centroid_y)
+                centroid = (centroid_x,centroid_y) # average x, y coordiantes of cells in a cluster
 
                 distance = np.linalg.norm(centroid-np.array((pose.x,pose.y)))
 
                 if distance < min_dist:
                     min_dist = distance
                     best_frontier = (centroid[0],centroid[1])
-            print(best_frontier)
+
             goal = Pose2D(x = best_frontier[0], y = best_frontier[1])
             self.planner_go_to_pose2d(goal)
+
+    def planning_approach_artifact(self): # PLANNER 2
+        """Go to last seen artifact"""
+        robot_pose = self.get_pose_2d()
+        artifact_point = self.artifact_locations_[len(self.artifact_locations_)-1] # Get the last seen artifact
+        distance = np.linalg.norm((artifact_point.x,artifact_point.y) - (robot_pose.x,robot_pose.y)) - 1 # Near the artifact point
+        heading = np.atan(((artifact_point.x - robot_pose.x) / (artifact_point.y - robot_pose.y)))  # in Rads
+        # self.get_logger().info(f'Heading (Degrees): {np.degrees(heading)}')
+        x_increase = distance * np.cos(heading)
+        y_increase = distance * np.sin(heading)
+        goal = Pose2D(
+            x = robot_pose.x + x_increase,
+            y = robot_pose.y + y_increase,
+            theta = heading
+        )
+        self.planner_go_to_pose2d(goal)
+        self.visited_artifact_locations_.append(artifact_point)
   
     def main_loop(self):
             """
@@ -760,6 +788,9 @@ class CaveExplorer(Node):
             #######################################################
             # Select the next planner to execute
             # Update this logic as you see fit!
+            # if self.artifact_found_ and self.artifact_locations_[len(self.artifact_locations_)-1] not in self.visited_artifact_locations_: # check if a new artifact is found
+            #     self.planner_type_ = PlannerType.APPROACH_ARTIFACT
+            # else:
             self.planner_type_ = PlannerType.NEAREST_FRONTIER
             # if not self.reached_first_artifact_:
             #     self.planner_type_ = PlannerType.GO_TO_FIRST_ARTIFACT
@@ -783,7 +814,9 @@ class CaveExplorer(Node):
             elif self.planner_type_ == PlannerType.RANDOM_GOAL:
                 self.planner_random_goal()
             elif self.planner_type_ == PlannerType.NEAREST_FRONTIER:
-                self.find_nearest_frontier()
+                self.planner_nearest_frontier() # PLANNING 1
+            elif self.planner_type_ == PlannerType.APPROACH_ARTIFACT:
+                self.planning_approach_artifact() # PLANNING 2
             else:
                 self.get_logger().error('No valid planner selected')
                 self.destroy_node()
