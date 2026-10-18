@@ -26,6 +26,11 @@ def generate_launch_description():
         description='Flag to enable use_sim_time'
     )
     use_sim_time = LaunchConfiguration('use_sim_time')
+    rviz_config_launch_arg = DeclareLaunchArgument(
+        'rviz_config',
+        default_value=os.path.join(config_path, 'cave_explorer.rviz'),
+        description='RViz displays and saved camera-above-map window layout'
+    )
     world_launch_arg = DeclareLaunchArgument(
         'world',
         default_value='mars_cave.sdf',
@@ -146,12 +151,11 @@ def generate_launch_description():
         executable='rviz2',
         output='screen',
         parameters=[{'use_sim_time': use_sim_time}],
-        arguments=['-d', os.path.join(
-            config_path,
-            'cave_explorer.rviz')]
+        arguments=['-d', LaunchConfiguration('rviz_config')]
     )
 
     ld.add_action(use_sim_time_launch_arg)
+    ld.add_action(rviz_config_launch_arg)
     ld.add_action(world_launch_arg)
     ld.add_action(odom_mode_launch_arg)
     ld.add_action(depth_pointcloud_launch_arg)

@@ -35,6 +35,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'roadmap_evaluate = advanced_functions.roadmap_evaluation:main',
+            'online_roadmap = advanced_functions.online_roadmap_node:main',
             'cave_geometry = advanced_functions.cave_geometry_node:main',
             'cave_explorer = cave_explorer.cave_explorer:main',
             'artifact_detector = cave_explorer.artifact_detector:main',

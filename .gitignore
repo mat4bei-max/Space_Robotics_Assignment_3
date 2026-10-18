@@ -5,6 +5,8 @@ build/
 build_cleanup_backups/
 .venv/
 env.bash
+scripts/
+report/advanced4_validation
 
 # OS artifacts
 *:Zone.Identifier
@@ -49,5 +51,6 @@ yolo_ros/
 env.bash
 .venv-training/
 QUICK_START.md
-src/cave_explorer/advanced_functions/GEOMETRY.md
-src/cave_explorer/advanced_functions/README.md
+
+# Local advanced-functions guides (master, demo and task notes)
+/src/cave_explorer/advanced_functions/**/*.md

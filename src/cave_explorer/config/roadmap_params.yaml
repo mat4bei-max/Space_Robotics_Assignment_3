@@ -1,0 +1,22 @@
+online_roadmap:
+  ros__parameters:
+    robot_frame: base_link
+    update_period: 2.0
+    robot_radius: 0.5
+    safety_margin: 0.1
+    free_threshold: 25
+    node_spacing: 1.2
+    connection_radius: 4.0
+    neighbourhood_radius: 1.5
+    acceptance_fraction: 0.7
+    uniform_fraction: 0.2
+    samples_per_update: 20
+    attempts_per_update: 300
+    max_nodes: 600
+    seed: 7
+    coverage_radius: 2.0
+    coverage_samples: 128
+    repair_attempts: 30
+    isolation_patience: 5
+    reserve_fraction: 0.1
+    visit_radius: 0.75

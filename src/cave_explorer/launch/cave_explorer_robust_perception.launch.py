@@ -15,7 +15,9 @@ def generate_launch_description():
     config_file = package / 'config/detection_config.yaml'
     config = yaml.safe_load(config_file.read_text())
     detector = config['/yolo/yolo_node']['ros__parameters']
-    default_model = package / 'artifact_detection' / detector['model']
+    # This launch always uses RGB images, including when degradation is enabled.
+    # Match the mode-based configuration used by the regular detection launch.
+    default_model = package / 'artifact_detection' / detector['detection_models']['rgb']
     return LaunchDescription([
         DeclareLaunchArgument('enable_planning', default_value='false',
                               choices=['true', 'false'],
