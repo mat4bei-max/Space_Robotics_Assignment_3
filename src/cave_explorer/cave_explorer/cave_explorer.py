@@ -29,6 +29,7 @@ from collections import deque # Special lists
 
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
+from advanced_functions.advanced_cave_explorer import degrade_image
 
 
 def wrap_angle(angle):
@@ -118,12 +119,14 @@ class CaveExplorer(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # Action client for nav2
+        self.enable_planning_ = self.declare_parameter('enable_planning', True).value
         self.nav2_action_client_ = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.get_logger().warn('Waiting for navigate_to_pose action...')
-        self.nav2_action_client_.wait_for_server()
-        self.get_logger().warn('navigate_to_pose connected')
+        if self.enable_planning_:
+            self.get_logger().warn('Waiting for navigate_to_pose action...')
+            self.nav2_action_client_.wait_for_server()
+            self.get_logger().warn('navigate_to_pose connected')
         self.ready_for_next_goal_ = True
-        self.declare_parameter('print_feedback', rclpy.Parameter.Type.BOOL)
+        self.declare_parameter('print_feedback', False)
 
         # Publisher for the goal pose visualisation
         self.goal_pose_vis_ = self.create_publisher(PoseStamped, 'goal_pose', 1)
@@ -141,6 +144,10 @@ class CaveExplorer(Node):
         self.detection_images_ = {}
         self.detection_every_n_images_ = self.declare_parameter('detection_every_n_images', 1).value
         self.depth_detection_ = self.declare_parameter('use_depth_detection', False).value
+        self.declare_parameter('degradation_effect', 'none')
+        self.declare_parameter('degradation_severity', 'mild')
+        self.clean_image_pub_ = self.create_publisher(Image, '/advanced_perception/clean', 1)
+        self.degraded_image_pub_ = self.create_publisher(Image, '/advanced_perception/degraded', 1)
         self.detection_image_count_ = 0
         self.latest_artifact_detections_ = None
         self.detection_image_pub_ = self.create_publisher(Image, '/artifact_detection/image', 1)
@@ -159,7 +166,8 @@ class CaveExplorer(Node):
         self.capture_sub_ = self.create_subscription(Empty, '/capture_image', self.capture_callback, 10)
 
         # Timer for main loop
-        self.main_loop_timer_ = self.create_timer(0.2, self.main_loop)
+        if self.enable_planning_:
+            self.main_loop_timer_ = self.create_timer(0.2, self.main_loop)
     
     def get_pose_2d(self):
         """
@@ -294,18 +302,34 @@ class CaveExplorer(Node):
         self.detection_image_count_ += 1
         if self.detection_image_count_ >= self.detection_every_n_images_:
             key = (rgb_msg.header.stamp.sec, rgb_msg.header.stamp.nanosec)
-            self.detection_images_[key] = (rgb_msg, depth_msg)
+            clean = self.cv_bridge_.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
+            effect = self.get_parameter('degradation_effect').value
+            severity = self.get_parameter('degradation_severity').value
+            if self.depth_detection_ and effect != 'none':
+                self.get_logger().error('RGB degradation requires use_depth_detection=false.', throttle_duration_sec=5.0)
+                self.detection_image_count_ = 0
+                return
+            try:
+                degraded = degrade_image(clean, effect, severity)
+            except (ValueError, TypeError) as exc:
+                self.get_logger().error(str(exc), throttle_duration_sec=5.0)
+                self.detection_image_count_ = 0
+                return
+            clean_msg = self.cv_bridge_.cv2_to_imgmsg(clean, encoding='bgr8')
+            clean_msg.header = rgb_msg.header
+            degraded_msg = self.cv_bridge_.cv2_to_imgmsg(degraded, encoding='bgr8')
+            degraded_msg.header = rgb_msg.header
+            self.clean_image_pub_.publish(clean_msg)
+            self.degraded_image_pub_.publish(degraded_msg)
+            detection_image = (cv2.cvtColor(processed_depth_image, cv2.COLOR_GRAY2BGR)
+                               if self.depth_detection_ else degraded)
+            detection_msg = self.cv_bridge_.cv2_to_imgmsg(detection_image, encoding='bgr8')
+            detection_msg.header = rgb_msg.header
+            # Cache exactly what YOLO sees; keep raw depth for localisation.
+            self.detection_images_[key] = (detection_msg, depth_msg)
             while len(self.detection_images_) > 10:
                 del self.detection_images_[next(iter(self.detection_images_))]
-
-            # Publish the appropriate image (depth or RGB) for artifact detection.
-            if self.depth_detection_:
-                processed_depth_image = cv2.cvtColor(processed_depth_image, cv2.COLOR_GRAY2BGR)
-                depth_msg = self.cv_bridge_.cv2_to_imgmsg(processed_depth_image, encoding='bgr8')
-                depth_msg.header = rgb_msg.header
-                self.detection_image_pub_.publish(depth_msg)
-            else:
-                self.detection_image_pub_.publish(rgb_msg)
+            self.detection_image_pub_.publish(detection_msg)
 
             self.detection_image_count_ = 0
 
@@ -317,12 +341,8 @@ class CaveExplorer(Node):
         self.latest_artifact_detections_ = msg
         self.artifact_found_ = bool(msg.detections)
 
-        # If no artifacts are found, skip further processing
-        if not self.artifact_found_:
-            return
-
-        # Log artifact finding
-        self.get_logger().info('Artifact found!')
+        if self.artifact_found_:
+            self.get_logger().info('Artifact found!')
 
         # Retrieve the corresponding image for the detections based on the timestamp key
         key = (msg.header.stamp.sec, msg.header.stamp.nanosec)
@@ -335,17 +355,15 @@ class CaveExplorer(Node):
         rgb_image = self.cv_bridge_.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
         depth_image = self.cv_bridge_.imgmsg_to_cv2(depth_msg, desired_encoding='passthrough')
         
-        # Annotate the image with the detections and publish it
-        if self.depth_detection_:
-            detection_image = (np.clip((depth_image.astype(np.float64) / 15.0), 0.0, 1.0) * 255.0).astype(np.uint8)
-            detection_image = cv2.cvtColor(detection_image, cv2.COLOR_GRAY2BGR)
-            annotated = self.annotate_image(detection_image, msg.detections)
-        else:
-            annotated = self.annotate_image(rgb_image, msg.detections)
+        # Publish even empty detections so RViz does not retain stale boxes.
+        annotated = self.annotate_image(rgb_image, msg.detections)
 
         annotated_msg = self.cv_bridge_.cv2_to_imgmsg(annotated, encoding='bgr8')
         annotated_msg.header = msg.header
         self.image_detections_pub_.publish(annotated_msg)
+
+        if not self.artifact_found_:
+            return
 
         # Get robot pose at the time of the image capture
         robot_pose = await self.get_pose_2d_async(depth_msg.header.stamp)
