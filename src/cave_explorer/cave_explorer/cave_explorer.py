@@ -149,7 +149,7 @@ class CaveExplorer(Node):
         self.detection_images_ = {}
         self.detection_every_n_images_ = self.declare_parameter('detection_every_n_images', 1).value
         self.depth_detection_ = self.declare_parameter('use_depth_detection', False).value
-        self.declare_parameter('degradation_effect', 'none')
+        self.degradation_effect_ = self.declare_parameter('degradation_effect', 'none').value
         self.declare_parameter('degradation_severity', 'mild')
         self.clean_image_pub_ = self.create_publisher(Image, '/advanced_perception/clean', 1)
         self.degraded_image_pub_ = self.create_publisher(Image, '/advanced_perception/degraded', 1)
@@ -158,7 +158,6 @@ class CaveExplorer(Node):
         self.detection_image_pub_ = self.create_publisher(Image, '/artifact_detection/image', 1)
         self.image_detections_pub_ = self.create_publisher(Image, '/detections_image', 1)
         self.artifact_detections_sub_ = self.create_subscription(DetectionArray, '/yolo/detections', self.artifact_detections_callback, 1,)
-        
         # Prepare image capture
         data_directory = self.declare_parameter('data_directory', '').value
         self.activate_rgb_capture_ = self.declare_parameter('activate_rgb_capture', False).value
@@ -247,25 +246,41 @@ class CaveExplorer(Node):
         return pose
 
     def control_callback(self, msg):
-        """
-        Control callback for handling command input.
-        """
+        """Handle image mode selection and toggle RGB degradation."""
         command = msg.data.strip()
 
         if command == 'depth_detection':
             self.depth_detection_ = True
+            self.degradation_effect_ = 'none'
+
         elif command == 'rgb_detection':
             self.depth_detection_ = False
+            self.degradation_effect_ = 'none'
 
-        # elif command == 'degraded_detection':
-        #     self.degraded_detection_ = not self.degraded_detection_
+        elif command == 'degraded_detection':
+            self.depth_detection_ = False
+            self.degradation_effect_ = (
+                'darkness' if self.degradation_effect_ == 'none' else 'none'
+            )
+
+        elif command == 'change_detection_framrate':
+            self.detection_every_n_images_ = {
+                1: 2, 2: 4, 4: 1
+            }.get(self.detection_every_n_images_, 1)
 
         else:
             self.get_logger().warn(f'Unknown command: {command}')
             return
 
+        self.detection_images_.clear()
+        self.detection_image_count_ = 0
+        self.latest_artifact_detections_ = None
+        self.artifact_found_ = False
+
         self.get_logger().info(
-            f'Use Depth Detection={self.depth_detection_}'
+            f'Use Depth Detection={self.depth_detection_}, '
+            f'Degradation={self.degradation_effect_}, '
+            f'Detection every {self.detection_every_n_images_} image(s)'
         )
 
     def map_callback(self, map_msg: OccupancyGrid):
@@ -330,7 +345,7 @@ class CaveExplorer(Node):
         if self.detection_image_count_ >= self.detection_every_n_images_:
             key = (rgb_msg.header.stamp.sec, rgb_msg.header.stamp.nanosec)
             clean = self.cv_bridge_.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
-            effect = self.get_parameter('degradation_effect').value
+            effect = self.degradation_effect_
             severity = self.get_parameter('degradation_severity').value
             if self.depth_detection_ and effect != 'none':
                 self.get_logger().error('RGB degradation requires use_depth_detection=false.', throttle_duration_sec=5.0)
