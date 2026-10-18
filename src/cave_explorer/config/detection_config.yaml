@@ -13,7 +13,7 @@ cave_explorer_node:
 /yolo/yolo_node:
   ros__parameters:
     model: "models/trained_models/Artefact_detection_model_v2/train/weights/best.pt"
-    device: "cuda:0"
+    device: "cpu"
     threshold: 0.6
     image_reliability: 1
     yolo_encoding: bgr8
