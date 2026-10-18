@@ -770,7 +770,7 @@ class CaveExplorer(Node):
             #######################################################
             # Select the next planner to execute
             # Update this logic as you see fit!
-            # if artifact is detected and artifact not in self.visited_artifact_locations_:
+            # if self.artifact_found_ and self.artifact_locations_[len(self.artifact_locations_)-1] not in self.visited_artifact_locations_: # check if a new artifact is found
             #     self.planner_type_ = PlannerType.APPROACH_ARTIFACT
             # else:
             self.planner_type_ = PlannerType.NEAREST_FRONTIER
