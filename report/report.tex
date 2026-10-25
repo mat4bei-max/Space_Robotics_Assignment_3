@@ -68,7 +68,8 @@
 Generative AI tools were used to assist with analysing error messages during
 the debugging process, creating helper scripts for advanced visual debugging,
 formatting this report as a \LaTeX{} document, and
-correcting spelling and wording throughout the report.
+correcting spelling and wording throughout the report. OpenAI Codex also assisted
+with drafting Advanced 1, 2 and 4 from the implementation and saved experiment results.
 
 \section{Statement of Individual Contributions}
 
@@ -85,12 +86,9 @@ correcting spelling and wording throughout the report.
         Planning 1 & Yes & Lucas & All \\
         Planning 2 & Yes & Lucas & All \\
         Planning 3 & Yes & Lucas & All \\
-        Advanced 1 & & & \\
-        Advanced 2 & & & \\
-        Advanced 3 & & & \\
-        Advanced 4 & & & \\
-        Advanced 5 & & & \\
-        Advanced 6 & & & \\
+        Advanced 1 & Yes & Elijah & All \\
+        Advanced 2 & Yes & Elijah & All \\
+        Advanced 4 & Yes & Elijah & All \\
         Report writing & & & \\
         Recorded videos & & & \\
         \hline
@@ -488,21 +486,229 @@ else:
 \end{lstlisting}
 
 \subsection{Advanced 1: Robust Perception}
+The goal of this task was to extend artefact detection to poor lighting and
+motion blur. The RGB images were degraded before being sent to the detector,
+while the original depth measurements were retained for localisation. Darkness
+was simulated by multiplying pixel intensities by 0.7, 0.4 and 0.2 for mild,
+moderate and severe conditions. Horizontal motion blur averaged neighbouring
+pixels using kernel lengths of 5, 11 and 21 pixels. Combined conditions applied
+darkness followed by blur at the same severity. Neither operation changes image
+geometry, so the existing bounding-box annotations remain valid.
+
+\begin{lstlisting}[caption={Core darkness and horizontal motion-blur operations, with input checks omitted}, label={lst:advanced-degradation}]
+darkened = image.astype(np.float32) * brightness_factor
+darkened = np.clip(np.rint(darkened), 0, 255).astype(np.uint8)
+kernel = np.ones((1, int(blur_length)), dtype=np.float32) / blur_length
+degraded = cv2.filter2D(darkened, -1, kernel,
+                      borderType=cv2.BORDER_REFLECT_101)
+\end{lstlisting}
+
+The original split was preserved: 142 training, 30 validation and 31 test images.
+All degraded versions remained in their source split. An initial robust model
+used clean images, darkness and blur separately. The final model was fine-tuned
+from the original RGB checkpoint using a mixture of 40\% clean images and 20\%
+each of darkness, blur and combined degradation. Training used AdamW, a learning
+rate of 0.0002, batch size 4 and image size 640, with a maximum of 100 epochs
+and early-stopping patience of 20.
+
+Figure~\ref{fig:advanced-robust-comparison} shows the saved test comparison across
+all ten conditions. Severe darkness reduced the baseline mAP@50--95 to 0.652,
+and severe blur reduced it to 0.562. The final robust model achieved 0.825 and
+0.755 respectively. The largest improvement was under combined severe degradation:
+mAP@50--95 increased from 0.073 to 0.762, compared with 0.676 for the initial
+robust model. Clean-image mAP@50--95 also increased from 0.813 to 0.837, although
+clean mAP@50 fell slightly from 0.995 to 0.994.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{advanced1_model_comparison.png}
+    \caption{Saved test-set mAP@50--95 for the original detector (baseline),
+    the first fine-tuned model (previous\_robust), and the final model trained
+    with combined degradation (robust). These are offline detection results.}
+    \label{fig:advanced-robust-comparison}
+\end{figure}
+
+For precision and recall, one confidence threshold per model was selected on
+mixed validation data and held fixed across test conditions: 0.172 for the
+baseline and 0.342 for the final model. Severe combined-condition recall increased
+from 0.000 to 0.960 at these operating points. AP was evaluated separately using
+predictions down to confidence 0.001; these results are a separate evaluation
+from the Perception 2 table.
+
+The live pipeline publishes the original image, degraded input and annotated
+detections for RViz, retaining timestamps to associate detections with the correct
+depth image and robot pose. Figure~\ref{fig:advanced-robust-rviz} reserves space
+for this runtime evidence. The experiment demonstrates robustness to the tested
+synthetic effects, rather than physical dust or sensor noise. Further work would
+test independent capture sequences, measure localisation error, and include a
+clean-only fine-tuning control to separate the benefit of augmentation from
+additional training.
+
+\begin{figure}[H]
+    \centering
+    \IfFileExists{images/advanced1_rviz.png}{%
+        \includegraphics[width=\linewidth]{advanced1_rviz.png}%
+    }{%
+        \fbox{\parbox[c][3cm][c]{0.92\linewidth}{\centering
+        \textbf{RViz image placeholder: Advanced 1}\\
+        Insert original RGB, severely degraded RGB and annotated detections
+        at the same robot pose. Label the model and effect settings.}}%
+    }
+    \caption{Runtime perception display: original image, degraded image, degraded detector output, and camera depth view.}
+    \label{fig:advanced-robust-rviz}
+\end{figure}
 
 
 \subsection{Advanced 2: Cave Geometry Analysis}
+The goal of this task was to identify wide accessible areas and narrow passages
+as the cave map developed. A separate geometry node processes the latest
+occupancy grid and robot pose every two seconds. Occupancy values from 0 to 25
+are treated as free; unknown cells, higher values and the map boundary block
+movement. A Euclidean distance transform gives each cell's distance to the nearest
+blocked cell centre. Subtracting half a cell diagonal conservatively accounts
+for the area occupied by that cell.
 
+\begin{lstlisting}[caption={Conservative clearance and traversability calculation}, label={lst:advanced-clearance}]
+free = (grid >= 0) & (grid <= free_threshold)
+padded = np.pad(free, 1, constant_values=False)
+distances = ndimage.distance_transform_edt(padded)[1:-1, 1:-1] * resolution
+clearance = np.maximum(0.0, distances - resolution / math.sqrt(2))
+traversable = free & (clearance >= robot_radius + safety_margin)
+\end{lstlisting}
 
-\subsection{Advanced 3: Communication Network Deployment}
+A four-connected flood fill from the robot identifies reachable cells, requiring
+clearance of at least the 0.5 m robot radius plus a 0.1 m safety margin. The
+maximum clearance in this component defines the widest accessible disc, displayed
+as a green circle with its diameter. This measures local open space rather than
+the total area of a chamber. Recomputing from the accumulated map allows the
+estimate to change after exploration or SLAM corrections. Unknown boundaries
+produce provisional measurements rather than being interpreted as observed walls.
+
+Narrow passages are found by thinning connected free space to a centreline and
+sampling twice the clearance along its branches. A three-sample median filter
+reduces isolated dips. Sections narrower than 3 m qualify as narrow passages;
+relative bottlenecks may be wider, but must be at most 75\% of the smaller
+shoulder width and at least 0.6 m narrower, with shoulders on both sides within
+6 m. Sections must persist for 1.2 m, and detections near junctions are excluded.
+Nearby candidates are merged to reduce duplicate markers.
+
+The 19 geometry unit tests passed. In synthetic maps, the detector identified
+a 2.2 m corridor and a 4.2 m neck between wider rooms, each within 0.2 m of its
+known width. A wide room produced no passage detections, and a larger disconnected
+room was excluded from the widest accessible region. These checks validate
+controlled cases; Figure~\ref{fig:advanced-geometry-rviz} still requires a cave
+screenshot showing that the runtime features correspond to the mapped walls.
+
+\begin{figure}[H]
+    \centering
+    \IfFileExists{images/advanced2_rviz.png}{%
+        \includegraphics[width=\linewidth]{advanced2_rviz.png}%
+    }{%
+        \fbox{\parbox[c][4cm][c]{0.92\linewidth}{\centering
+        \textbf{RViz image placeholder: Advanced 2}\\
+        Show the cave map, clearance overlay, green widest-area circle and
+        a labelled narrow passage. Keep diameter and width labels readable;
+        include a wall-to-wall measurement for comparison.}}%
+    }
+    \caption{Cave geometry overlay showing the widest accessible disc and a
+    narrow passage.}
+    \label{fig:advanced-geometry-rviz}
+\end{figure}
+
+Only centreline sections supporting detections are displayed, preventing chamber
+branches from resembling planned routes. Features near unknown space are marked
+provisional, and inaccessible constrictions are labelled separately. Remaining
+limitations include coarse map resolution, underestimated widths in curved or
+asymmetric passages, and missed short necks near junctions. Comparing runtime
+widths against manual map measurements and tuning the thresholds would improve
+confidence in the results. These geometric estimates do not guarantee Nav2
+traversability.
 
 
 \subsection{Advanced 4: Online Roadmap Construction}
+The goal of this task was to build a sparse navigation graph online while the
+robot explored. The initial strategy added nodes at sampled robot positions and
+connected nearby nodes where collision checks permitted. The improved approaches
+also sample observed, reachable free space, allowing the graph to extend beyond
+the travelled path. A uniform sampler was compared with a distance-guided sampler
+that favours locally high-clearance cells. The latter applies a 70\% local
+clearance-rank threshold to 80\% of attempts, retaining 20\% uniform attempts.
+Both favour newly observed cells on half their sampling attempts.
 
+Nodes normally use 1.2 m spacing and a 4 m connection radius. Connections are
+checked against the conservative clearance map from Advanced 2, including the
+robot radius and safety margin. The check below also allows for the distance
+between samples so that a thin obstacle cannot simply fall between them.
 
-\subsection{Advanced 5: Science Tour Planning}
+\begin{lstlisting}[caption={Collision checking along a proposed roadmap edge}, label={lst:advanced-roadmap-edge}]
+def edge_valid(self, a, b):
+    distance = math.dist(a, b)
+    count = max(1, math.ceil(distance / (self.origin[3] * 0.5)))
+    allowance = distance / count / 2
+    required = self.settings.robot_radius + self.settings.safety_margin
+    return all(self.lower_clearance(p) >= required + allowance
+               for p in np.linspace(a, b, count + 1))
+\end{lstlisting}
 
+Every map update revalidates existing nodes and edges. Bounded repair sampling
+attempts to join small components, while persistently isolated sampled nodes
+are retired. At capacity, a sampled node can be replaced only when its neighbours
+remain directly interconnected; travelled nodes are protected. RViz markers
+distinguish components, isolated nodes and node creation sources. The roadmap
+node observes exploration without issuing robot motion commands.
 
-\subsection{Advanced 6: Adaptive Scientific Sampling}
+Table~\ref{tab:advanced-roadmap-results} reports a saved replay of seven cave
+map/pose snapshots captured over approximately 14 seconds. Each strategy used
+seed 7, capacity 120 and the same three fixed destinations, all reachable in the
+grid reference. The graphs started empty in an already mapped cave, so the
+baseline did not inherit the robot's earlier trajectory.
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lrrr}
+        \hline
+        Measure & Baseline & Uniform & Distance-guided \\
+        \hline
+        Final nodes & 2 & 106 & 107 \\
+        Isolated nodes & 2 & 14 & 2 \\
+        Successful queries & 0/3 & 0/3 & 1/3 \\
+        Checked coverage & 2.3\% & 7.8\% & 15.6\% \\
+        \hline
+    \end{tabular}
+    \caption{Short cave-snapshot replay. Coverage estimates the fraction of up
+    to 128 sampled reachable cell centres with a collision-checked connection
+    to the robot's graph component within 2 m.}
+    \label{tab:advanced-roadmap-results}
+\end{table}
+
+The successful distance-guided route was 18.37 m, compared with 18.07 m for the
+grid reference. The other two queries failed because the graph was disconnected
+(Figure~\ref{fig:advanced-roadmap-map}). A separate synthetic comparison over
+three seeds found that, at capacity 60, both sampling methods achieved 98.4\%
+checked coverage versus 62.5\% for the travelled baseline. However, at capacity
+30, distance guidance solved only 7/9 reachable queries versus 8/9 for uniform
+sampling and 9/9 for the baseline. Distance guidance therefore did not improve
+every case.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{advanced4_roadmap_map.png}
+    \caption{Distance-guided roadmap replayed from recorded cave snapshots.
+    The thick blue route reaches one fixed destination; red crosses mark the
+    two failed queries. Blue nodes have an edge but are not necessarily connected
+    to the robot; red nodes are isolated. This is an offline annotated map,
+    not an RViz screenshot or evidence of robot execution.}
+    \label{fig:advanced-roadmap-map}
+\end{figure}
+
+The main remaining difficulty is achieving connectivity within a limited node
+budget. These preliminary results show representation beyond the recent robot
+path, but not complete cave coverage. A full exploration recording, repeated
+seeds and capacities, and additional sampling near disconnected corridor ends
+would provide a stronger assessment. The grid reference shares the edge validator
+and is discretised, so its route length is a comparison rather than a continuous
+optimality or independent collision-safety guarantee.
 
 
 \section{Results}
