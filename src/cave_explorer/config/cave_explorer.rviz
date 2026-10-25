@@ -629,6 +629,8 @@ Visualization Manager:
     - Class: rviz_default_plugins/MarkerArray
       Name: Online Roadmap
       Enabled: true
+      Namespaces:
+        example_astar_route: false
       Topic:
         Depth: 1
         Durability Policy: Transient Local
@@ -639,6 +641,8 @@ Visualization Manager:
     - Class: rviz_default_plugins/MarkerArray
       Name: Roadmap Baseline
       Enabled: false
+      Namespaces:
+        example_astar_route: false
       Topic:
         Depth: 1
         Durability Policy: Transient Local
@@ -649,6 +653,8 @@ Visualization Manager:
     - Class: rviz_default_plugins/MarkerArray
       Name: Roadmap Uniform
       Enabled: false
+      Namespaces:
+        example_astar_route: false
       Topic:
         Depth: 1
         Durability Policy: Transient Local

@@ -728,7 +728,7 @@ class CaveExplorer(Node):
                         if self.is_frontier_cell(neighbor):
                             inner_queue.append(neighbor)
 
-                if len(cluster) >= 3: # only allow clusters of a certain size
+                if len(cluster) >= 5: # only allow clusters of a certain size
                     frontiers.append(cluster)
 
             visited[current_cell] = True
@@ -755,7 +755,7 @@ class CaveExplorer(Node):
 
                 for frontier in clusters:
                     cluster_world_x.append(self.xlim_[0]+frontier[0]*self.map_resolution)
-                    cluster_world_y.append(self.xlim_[0]+frontier[1]*self.map_resolution)
+                    cluster_world_y.append(self.ylim_[0]+frontier[1]*self.map_resolution)
 
                 centroid_x = np.mean(np.array(cluster_world_x), axis=0)
                 centroid_y = np.mean(np.array(cluster_world_y), axis=0)
@@ -774,8 +774,11 @@ class CaveExplorer(Node):
         """Go to last seen artifact"""
         robot_pose = self.get_pose_2d()
         artifact_point = self.artifact_locations_[len(self.artifact_locations_)-1] # Get the last seen artifact
-        distance = np.linalg.norm((artifact_point.x,artifact_point.y) - (robot_pose.x,robot_pose.y)) - 1 # Near the artifact point
-        heading = np.atan(((artifact_point.x - robot_pose.x) / (artifact_point.y - robot_pose.y)))  # in Rads
+        dx = artifact_point.x - robot_pose.x
+        dy = artifact_point.y - robot_pose.y
+
+        distance = np.hypot(dx, dy) - 1.0
+        heading = np.arctan2(dy, dx)
         # self.get_logger().info(f'Heading (Degrees): {np.degrees(heading)}')
         x_increase = distance * np.cos(heading)
         y_increase = distance * np.sin(heading)
@@ -827,10 +830,10 @@ class CaveExplorer(Node):
             #######################################################
             # Select the next planner to execute
             # Update this logic as you see fit!
-            # if self.artifact_found_ and self.artifact_locations_[len(self.artifact_locations_)-1] not in self.visited_artifact_locations_: # check if a new artifact is found
-            #     self.planner_type_ = PlannerType.APPROACH_ARTIFACT
-            # else:
-            self.planner_type_ = PlannerType.NEAREST_FRONTIER
+            if self.artifact_found_ and self.artifact_locations_[len(self.artifact_locations_)-1] not in self.visited_artifact_locations_: # check if a new artifact is found
+                self.planner_type_ = PlannerType.APPROACH_ARTIFACT
+            else:
+                self.planner_type_ = PlannerType.NEAREST_FRONTIER
             # if not self.reached_first_artifact_:
             #     self.planner_type_ = PlannerType.GO_TO_FIRST_ARTIFACT
             # elif not self.returned_home_:
