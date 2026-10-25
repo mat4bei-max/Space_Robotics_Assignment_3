@@ -50,7 +50,7 @@
 
 \title{Space Robotics -- Assignment 3}
 
-\author{Lucas Plumbohm \\ ...
+\author{Lucas Plumbohm \\ 24949202
     \and Elijah Spannenberg \\ 24767473
     \and Mathis Beissner \\ 26665176}
 
@@ -82,9 +82,9 @@ correcting spelling and wording throughout the report.
         Perception 1 & Yes & Mathis & All \\
         Perception 2 & Yes & Mathis & All \\
         Perception 3 & Yes & Mathis & All \\
-        Planning 1 & & & \\
-        Planning 2 & & & \\
-        Planning 3 & & & \\
+        Planning 1 & Yes & Lucas & All \\
+        Planning 2 & Yes & Lucas & All \\
+        Planning 3 & Yes & Lucas & All \\
         Advanced 1 & & & \\
         Advanced 2 & & & \\
         Advanced 3 & & & \\
@@ -328,13 +328,164 @@ and after clustering.
 \end{figure}
 
 \subsection{Planning 1: Autonomously Explore the Cave}
+The goal for planning task 1 was to autonomously explore the area. Frontier based exploration was used for this, by searching the \texttt{map\_\allowbreak msg/OccupancyGrid} to find any free cells that were neighbouring unknown cells.
 
+\begin{lstlisting}[caption={Frontier cell detection from occupany grid}, label={lst:planning-frontier-detection}]
+def is_frontier_cell(self, pos):
+    """Returns if a cell is occupied on the map"""
+    if self.occupancy_map[pos] != 0: #FREE space
+        return False
+
+    
+    for neighbor in self.get_neighbours(pos):
+        if self.occupancy_map[neighbor] == -1: #UNKOWN space
+            return True
+    return False
+\end{lstlisting}
+
+\newpage
+
+These were then 'clustered' by checking if there were frontier cells neighbouring each other.
+These clusters were then returned in a larger array to later calculate the best cluster to approach.
+
+\begin{lstlisting}[caption={Frontier cell clustering}, label={lst:planning-frontier-clustering}]
+def find_frontier_clusters(self):
+    """Returns array of frontier clusters"""
+    visited = np.zeros(self.occupancy_map.shape, dtype=bool)
+    visited_neighbor = np.zeros(self.occupancy_map.shape, dtype=bool)
+    frontiers = []
+    starting_pose = (0,0)
+    queue = deque([starting_pose])
+
+    while queue:
+        current_cell = queue.popleft()
+
+        if self.is_frontier_cell(current_cell):
+            cluster = [] #find all the frontier nodes in a cluster
+            inner_queue = deque([current_cell])
+
+            while inner_queue:
+                frontier_cell = inner_queue.popleft()
+                if visited[(frontier_cell)] == True:
+                    continue
+                visited[frontier_cell] = True
+                cluster.append(frontier_cell)
+                for neighbor in self.get_neighbours(frontier_cell):
+                    if self.is_frontier_cell(neighbor):
+                        inner_queue.append(neighbor)
+
+            if len(cluster) >= 3: # only allow clusters of a certain size
+                frontiers.append(cluster)
+
+        visited[current_cell] = True
+        for neighbor in self.get_neighbours(current_cell):
+            if not visited_neighbor[neighbor]:
+                visited_neighbor[neighbor] = True
+                queue.append(neighbor)
+    
+    return frontiers
+\end{lstlisting}
+
+\newpage
+
+We used the following code snippit to find the cell indexes of neighbouring cells
+
+\begin{lstlisting}[caption={Find neighbouring cell indexes}, label={lst:planning-find-neighbour}]
+def get_neighbours(self, pos): # PLANNER 1
+    """Returns neighbors to a cell"""
+    x,y = pos
+    neighbors = []
+    for dx in [-1, 0, 1]:
+        for dy in [-1, 0, 1]:
+            if dx == 0 and dy == 0:
+                continue
+            nx, ny = x + dx, y + dy
+            width, height = self.occupancy_map.shape
+            if 0 <= nx < width and 0 <= ny < height:
+                neighbors.append((nx,ny))
+    return neighbors
+\end{lstlisting}
+
+Next we had to find the best frontier cluster to approach.
+We did this by calculating the average position of each cell in a cluster and choosing the nearest option to the robot.
+However, due to the fact the \texttt{map\_\allowbreak msg/OccupancyGrid} held data in cells, we must convert these values into the relative world coordinates.
+This conversion can be seen in lines 16-19 of Listing~\ref{lst:planning-nearest-frontier}
+
+\newpage
+
+\begin{lstlisting}[caption={Approach the nearest frontier cluster}, label={lst:planning-nearest-frontier}]
+def planner_nearest_frontier(self):
+    """Go to the nearest frontier"""
+
+    pose = self.get_pose_2d()
+    frontiers = self.find_frontier_clusters()
+
+    if frontiers: # if there are any unexplored frontiers
+        best_frontier = None
+        min_dist = 9999999 # A large number
+
+        for clusters in frontiers:
+            cluster_world_x = []
+            cluster_world_y = []
+
+            for frontier in clusters:
+                cluster_world_x.append(self.xlim_[0]+
+                                        frontier[0]*self.map_resolution)
+                cluster_world_y.append(self.xlim_[0]+
+                                        frontier[1]*self.map_resolution)
+
+            centroid_x = np.mean(np.array(cluster_world_x), axis=0)
+            centroid_y = np.mean(np.array(cluster_world_y), axis=0)
+            centroid = (centroid_x,centroid_y) # average x, y coordiantes of cells in a cluster
+
+            distance = np.linalg.norm(centroid-np.array((pose.x,pose.y)))
+
+            if distance < min_dist:
+                min_dist = distance
+                best_frontier = (centroid[0],centroid[1])
+
+        goal = Pose2D(x = best_frontier[0], y = best_frontier[1])
+        self.planner_go_to_pose2d(goal)
+\end{lstlisting}
+
+\newpage
 
 \subsection{Planning 2: Close-Range Inspection}
+This task was to approach any artifacts the robot found during its exploration.
+This was done by checking for artifact detections every main loop, and if found, going to the last seen artifact pose in \texttt{self.artifact\_\allowbreak locations\_} from the perception 3 task.
 
+\begin{lstlisting}[caption={Approach the last seen artifact}, label={lst:planning-nearest-artifact}]
+def planning_approach_artifact(self):
+    """Go to last seen artifact"""
+    robot_pose = self.get_pose_2d()
+    artifact_point = self.artifact_locations_[len(self.artifact_locations_)-1] # Get the last seen artifact
+    distance = np.linalg.norm((artifact_point.x,artifact_point.y) - (robot_pose.x,robot_pose.y)) - 1 # Near the artifact point
+    heading = np.atan(((artifact_point.x - robot_pose.x) / (artifact_point.y - robot_pose.y)))  # in Rads
+    # self.get_logger().info(f'Heading (Degrees): {np.degrees(heading)}')
+    x_increase = distance * np.cos(heading)
+    y_increase = distance * np.sin(heading)
+    goal = Pose2D(
+        x = robot_pose.x + x_increase,
+        y = robot_pose.y + y_increase,
+        theta = heading
+    )
+    self.planner_go_to_pose2d(goal)
+    self.visited_artifact_locations_.append(artifact_point)
+\end{lstlisting}
+
+\newpage
 
 \subsection{Planning 3: Behaviour Switching}
+The aim for this task was to avoid visiting the same artifact more than once.
+Our solution for this was quite simple, whenever the robot visits an artifact, the pose of that artifact is added to an array, as seen at the end of Listing~\ref{lst:planning-nearest-artifact}, 
+so whenever a new artifact is detected, it checks if the pose of that artifact is already in that array and if so it ignores that detection.
 
+\begin{lstlisting}[caption={Approach the last seen artifact}, label={lst:planning-artifact-detection-check}]
+if self.artifact_found_ and self.artifact_locations_[len(self.artifact_locations_)-1] not in self.visited_artifact_locations_: # check if a new artifact is found
+    self.planner_type_ = PlannerType.APPROACH_ARTIFACT
+else:
+    self.planner_type_ = PlannerType.NEAREST_FRONTIER
+\end{lstlisting}
 
 \subsection{Advanced 1: Robust Perception}
 
