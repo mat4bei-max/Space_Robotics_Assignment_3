@@ -101,6 +101,9 @@ The demonstration video will be available at the following link:
     \url{https://drive.google.com/file/d/1lcFJpI5Udj0WWVrwgeedmuSQRxahaZ8d/view?usp=sharing}
 \end{center}
 
+\tableofcontents
+\clearpage
+
 \section{Project Overview}
 
 The aim of this project was to develop an autonomous exploration system for a
@@ -466,7 +469,7 @@ def planner_nearest_frontier(self):
             for frontier in clusters:
                 cluster_world_x.append(self.xlim_[0]+
                                         frontier[0]*self.map_resolution)
-                cluster_world_y.append(self.xlim_[0]+
+                cluster_world_y.append(self.ylim_[0]+
                                         frontier[1]*self.map_resolution)
 
             centroid_x = np.mean(np.array(cluster_world_x), axis=0)
@@ -483,6 +486,9 @@ def planner_nearest_frontier(self):
         self.planner_go_to_pose2d(goal)
 \end{lstlisting}
 
+The conversion listed above was not perfect, and could cause the goal pose being set outside the walls of the map.
+This caused the robot to never reach its goal and therefore not proceed with the following 2 tasks.
+
 \newpage
 
 \subsection{Planning 2: Close-Range Inspection}
@@ -494,8 +500,11 @@ def planning_approach_artifact(self):
     """Go to last seen artifact"""
     robot_pose = self.get_pose_2d()
     artifact_point = self.artifact_locations_[len(self.artifact_locations_)-1] # Get the last seen artifact
-    distance = np.linalg.norm((artifact_point.x,artifact_point.y) - (robot_pose.x,robot_pose.y)) - 1 # Near the artifact point
-    heading = np.atan(((artifact_point.x - robot_pose.x) / (artifact_point.y - robot_pose.y)))  # in Rads
+    dx = artifact_point.x - robot_pose.x
+    dy = artifact_point.y - robot_pose.y
+
+    distance = np.hypot(dx, dy) - 1.0
+    heading = np.arctan2(dy, dx)
     # self.get_logger().info(f'Heading (Degrees): {np.degrees(heading)}')
     x_increase = distance * np.cos(heading)
     y_increase = distance * np.sin(heading)
@@ -507,6 +516,8 @@ def planning_approach_artifact(self):
     self.planner_go_to_pose2d(goal)
     self.visited_artifact_locations_.append(artifact_point)
 \end{lstlisting}
+
+The goal was then calculated by adding the distance to the artifact to the robots pose. We subtract 1 from this distance so that the goal is not on top of the artifact.
 
 \newpage
 
@@ -521,6 +532,9 @@ if self.artifact_found_ and self.artifact_locations_[len(self.artifact_locations
 else:
     self.planner_type_ = PlannerType.NEAREST_FRONTIER
 \end{lstlisting}
+
+A challenge for this task was getting the robot to change goal pose, as when it had started moving towards a frontier, it would complete that path before moving to an artifact it had detected.
+Unfortunatly, we did not have the time to fix this issue.
 
 \subsection{Advanced 1: Robust Perception}
 The goal of this task was to extend artefact detection to poor lighting and
@@ -749,5 +763,13 @@ optimality or independent collision-safety guarantee.
 
 \section{Reflection on Teamwork}
 
+As a team, we decided that we would distribute the tasks evenly, by seperating the perception tasks, planning tasks, and advanced tasks, as seen in the Statement of Individual Contributions at the beginning of this document.
+This worked well for us, as it maximised the ability for us to work in parallel, having only a few tasks dependent on each others work.
+For team communication we used Microsoft Teams and GitHub for sharing files and code, this made it easy for us to upload our work and stay up to date.
+
+Overall, we only had minor issues when intergrating our code together, largely due to the poor performance of the VirtualBox, and the installation of yolo\_ros as an additional package.
+However, we quickly worked together to rectify these issues where possible (Performance could not be improved).
+
+In the future we would likely try and have earlier deadlines for these tasks so we could intergrate our code and fix these issues earlier so we can create a better solution.
 
 \end{document}
