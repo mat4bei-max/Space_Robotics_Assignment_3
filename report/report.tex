@@ -43,7 +43,6 @@
 \lstset{style=pythoncode}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.5em}
-% Allow extra line-breaking flexibility for long inline code identifiers.
 \setlength{\emergencystretch}{2em}
 \setstretch{1.05}
 \hypersetup{colorlinks=true, urlcolor=blue, linkcolor=black}
@@ -54,14 +53,13 @@
     \and Elijah Spannenberg \\ 24767473
     \and Mathis Beissner \\ 26665176}
 
-\date{}
+\date{26.10.2026}
 
 \begin{document}
 
 \setlength{\parindent}{0pt}
 
 \maketitle
-
 
 \section{Generative AI Disclosure}
 
@@ -89,34 +87,73 @@ with drafting Advanced 1, 2 and 4 from the implementation and saved experiment r
         Advanced 1 & Yes & Elijah & All \\
         Advanced 2 & Yes & Elijah & All \\
         Advanced 4 & Yes & Elijah & All \\
-        Report writing & & & \\
-        Recorded videos & & & \\
+        Report writing & Yes & Everyone & All \\
+        Recorded videos & Yes & Elijah & All \\
         \hline
     \end{tabularx}
 \end{table}
 
+\section{Demonstration Video}
+
+The demonstration video will be available at the following link:
+
+\begin{center}
+    \url{TBA}
+\end{center}
+
 \section{Project Overview}
-TBA
 
-\section{Implementation}
-TBA
-% Keep a subsection for each task attempted; remove unattempted task subsections.
-% For each task: describe the approach, performance, difficulties and improvements.
-% Add relevant code snippets and visual evidence where useful.
+The aim of this project was to develop an autonomous exploration system for a
+rover in a simulated Martian cave environment. Investigating these environments
+requires a robot capable of navigating unknown spaces and identifying
+scientifically interesting objects without continuous human guidance. Starting
+with the provided ROS~2 package and Gazebo cave environment, the system was
+extended to detect and localise artefacts, select exploration goals, and approach
+discovered objects for inspection. Existing SLAM and Nav2 capabilities provide
+mapping and navigation, while the developed software connects perception with
+higher-level decision making. RViz is used to inspect the developing map,
+detection results and estimated artefact positions.
 
-% Reusable code-listing template:
-% \begin{lstlisting}[caption={Implementation of ...}, label={lst:...}]
-% \end{lstlisting}
+The first stage of the project focused on developing perception capabilities
+for detecting and localising artefacts within the environment. This involved
+collecting and annotating a dataset of RGB and depth images and training
+separate YOLO models for the two modalities to identify artefacts under various
+conditions. To make the detections usable for navigation and mapping,
+bounding-box coordinates are combined with depth information, camera intrinsics
+and the robot's pose to estimate artefact positions in the map frame. Repeated
+observations are grouped using DBSCAN, and the resulting positions are displayed
+alongside annotated camera images in RViz. The RGB and depth models provide
+alternative detection methods with different strengths and limitations,
+particularly for distant objects and artefacts without a distinct depth profile.
 
-% Reusable figure template (put image files in images/):
-% \begin{figure}[htbp]
-%     \centering
-%     \includegraphics[width=\linewidth]{filename}
-%     \caption{...}
-%     \label{fig:...}
-% \end{figure}
+The planning component uses frontier-based exploration to select goals from
+the developing occupancy map. Free cells bordering unknown space are grouped
+into frontier clusters, and the nearest cluster is selected as the next
+exploration target. Navigation goals are passed to Nav2, which handles path
+planning and obstacle avoidance. Artefact detections provide an additional
+source of navigation goals. The behaviour logic switches between exploring
+unknown regions and approaching discovered artefacts for close-range inspection.
+Previously visited artefacts are recorded to reduce repeated inspections and
+allow exploration to resume. This connects the perception pipeline with
+autonomous goal selection rather than relying on manually specified destinations.
+
+These capabilities were further extended through three advanced tasks.
+Robust perception was investigated by degrading the image input to simulate
+challenging real-world conditions. This involved applying synthetic darkness
+and motion blur to RGB images and fine-tuning a detector on the degraded data.
+Offline evaluation showed improved detection performance under the tested
+degradation conditions. Cave geometry analysis uses the occupancy map to
+estimate clearance, identify wide accessible areas and detect narrow passages.
+Online roadmap construction builds a sparse graph from the robot's travelled
+path and observed free space, with candidate connections checked against the
+map. These extensions were assessed using controlled tests, saved detection
+results and recorded cave-map snapshots. The results demonstrate additional
+perception and mapping capabilities, while also revealing limitations in
+geometric estimates and roadmap connectivity.
 
 \newpage
+
+\section{Implementation}
 
 \subsection{Perception 1: Collect an Image Dataset of the Artefacts}
 The goal of this task was to create an image dataset for artefact detection.
@@ -709,10 +746,6 @@ seeds and capacities, and additional sampling near disconnected corridor ends
 would provide a stronger assessment. The grid reference shares the edge validator
 and is discretised, so its route length is a comparison rather than a continuous
 optimality or independent collision-safety guarantee.
-
-
-\section{Results}
-
 
 \section{Reflection on Teamwork}
 
